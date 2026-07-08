@@ -110,11 +110,18 @@ jobs:
           echo "已更新 FLEXExplorerToolbar.m 中的版本号: v$MAJOR.$MINOR.$PATCH-$BUILD"
           grep "FLEXXX_VERSION_" "$FILE"
 
-      # ============ 3. 安装 Theos ============
-      - name: Setup Theos
+      # ============ 3. 安装 Theos + ldid ============
+      - name: Setup Theos & ldid
         run: |
           if [ ! -d "$HOME/theos" ]; then
             git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          fi
+          # 安装ldid签名工具
+          brew install ldid proob 2>/dev/null || brew install ldid 2>/dev/null || true
+          # 备选: 从Theos自带编译
+          if ! command -v ldid &>/dev/null; then
+            git clone https://github.com/ProcursusTeam/ldid.git /tmp/ldid
+            cd /tmp/ldid && make -j$(sysctl -n hw.ncpu) && sudo cp ldid /usr/local/bin/
           fi
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
           echo "THEOS_PACKAGE_SCHEME=rootless" >> $GITHUB_ENV
