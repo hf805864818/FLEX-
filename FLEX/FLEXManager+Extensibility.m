@@ -131,13 +131,26 @@
 }
 
 - (void)registerDefaultSimulatorShortcuts {
-    // 重写这个方法，去除所有不可用的调用
-    NSLog(@"注册默认模拟器快捷键");
+    // 注册模拟按键快捷键
+    [self registerSimulatorShortcutWithKey:@"?"
+                                modifiers:0
+                                   action:^{
+        FLEXKeyboardHelpViewController *helpVC = [FLEXKeyboardHelpViewController new];
+        [FLEXManager.sharedManager.topMostController presentViewController:helpVC animated:YES completion:nil];
+    }
+                             description:@"显示快捷键帮助"];
+    
+    [self registerSimulatorShortcutWithKey:@"q"
+                                modifiers:UIKeyModifierShift
+                                   action:^{
+        [FLEXManager.sharedManager hideExplorerAnimated:YES];
+    }
+                             description:@"隐藏 FLEX"];
 }
 
 + (void)load {
     dispatch_async(dispatch_get_main_queue(), ^{
-        // 暂时禁用注册默认快捷键
+        [FLEXManager.sharedManager registerDefaultSimulatorShortcuts];
     });
 }
 

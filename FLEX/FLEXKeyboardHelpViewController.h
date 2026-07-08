@@ -8,6 +8,6 @@
 
 #import <UIKit/UIKit.h>
 
-@interface FLEXKeyboardHelpViewController : UIViewController
+@interface FLEXKeyboardHelpViewController : UIViewController <FLEXGlobalsEntry>
 
 @end

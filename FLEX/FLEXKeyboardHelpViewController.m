@@ -39,4 +39,14 @@
     [self.presentingViewController dismissViewControllerAnimated:YES completion:nil];
 }
 
++ (NSString *)globalsEntryTitle:(FLEXGlobalsRow)row {
+    return @"⌨️  模拟按键";
+}
+
++ (UIViewController *)globalsEntryViewController:(FLEXGlobalsRow)row {
+    FLEXKeyboardHelpViewController *viewController = [self new];
+    viewController.title = [self globalsEntryTitle:row];
+    return viewController;
+}
+
 @end

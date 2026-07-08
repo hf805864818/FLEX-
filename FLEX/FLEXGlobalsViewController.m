@@ -103,6 +103,9 @@
         case FLEXGlobalsRowOperationQueue:
             return [FLEXObjectExplorerFactory flex_concreteGlobalsEntry:row];
             
+        case FLEXGlobalsRowSimulatorKeyboard:
+            return [FLEXKeyboardHelpViewController new];
+            
         case FLEXGlobalsRowCount:
         default:
             @throw [NSException
@@ -154,6 +157,7 @@
                 [self globalsEntryForRow:FLEXGlobalsRowMainRunLoop],
                 [self globalsEntryForRow:FLEXGlobalsRowMainThread],
                 [self globalsEntryForRow:FLEXGlobalsRowOperationQueue],
+                [self globalsEntryForRow:FLEXGlobalsRowSimulatorKeyboard],
             ]
         };
 
