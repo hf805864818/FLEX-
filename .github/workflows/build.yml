@@ -82,7 +82,7 @@ jobs:
           # FLEX++ 版本号定义
           # 格式: MAJOR.MINOR.PATCH-BUILD
           # 此文件由 GitHub Actions 自动更新，请勿手动修改
-          FLEXXX_VERSION = ${MAJOR}.${MINOR}.${PATCH}-${BUILD}
+          FLEXXX_VERSION=${MAJOR}.${MINOR}.${PATCH}-${BUILD}
           EOF
 
           echo "new_version=${MAJOR}.${MINOR}.${PATCH}-${BUILD}" >> $GITHUB_OUTPUT
