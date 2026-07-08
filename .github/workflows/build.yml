@@ -170,7 +170,7 @@ jobs:
             echo "没有版本变更需要提交"
           else
             git commit -m "🔖 bump: v${{ steps.version.outputs.new_version }} [skip ci]"
-            git push
+            git -c http.extraHeader="Authorization: Bearer ${{ secrets.GH_PAT }}" push
             echo "✅ 已提交版本变更: v${{ steps.version.outputs.new_version }}"
           fi
 
