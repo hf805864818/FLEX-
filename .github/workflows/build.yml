@@ -32,6 +32,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
 
       # ============ 1. 版本自动递增 ============
       - name: Auto-increment version
