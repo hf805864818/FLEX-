@@ -18,13 +18,6 @@
 #import "x/Decrypt/UCDecryptTool.h"
 #import "x/AppProtection/UCAppProtectionTool.h"
 
-// FLEX++ 版本号
-#define FLEXXX_VERSION_MAJOR 1
-#define FLEXXX_VERSION_MINOR 0
-#define FLEXXX_VERSION_PATCH 0
-#define FLEXXX_VERSION_BUILD 1
-#define FLEXXX_VERSION_STRING [NSString stringWithFormat:@"v%d.%d.%d-%d", FLEXXX_VERSION_MAJOR, FLEXXX_VERSION_MINOR, FLEXXX_VERSION_PATCH, FLEXXX_VERSION_BUILD]
-
 @interface FLEXExplorerToolbar ()
 
 @property (nonatomic, readwrite) FLEXExplorerToolbarItem *globalsItem;
@@ -53,9 +46,6 @@
 @property (nonatomic, readwrite) FLEXExplorerToolbarItem *filzaItem;
 @property (nonatomic, readwrite) FLEXExplorerToolbarItem *protectionItem;
 @property (nonatomic) UIView *secondRowBackground;
-
-// 版本号标签
-@property (nonatomic) UILabel *versionLabel;
 
 @end
 
@@ -135,15 +125,6 @@
         
         // secondRowItems - 第二行（6个按钮+空白=7列）
         self.secondRowItems = @[_classdumpItem, _disassemblerItem, _decryptItem, _filzaItem, _protectionItem];
-        
-        // 版本号标签 - 显示在第一行背景右上角
-        self.versionLabel = [[UILabel alloc] init];
-        self.versionLabel.text = FLEXXX_VERSION_STRING;
-        self.versionLabel.font = [UIFont monospacedDigitSystemFontOfSize:10 weight:UIFontWeightMedium];
-        self.versionLabel.textColor = [FLEXColor.iconColor colorWithAlphaComponent:0.45];
-        self.versionLabel.textAlignment = NSTextAlignmentRight;
-        self.versionLabel.backgroundColor = UIColor.clearColor;
-        [self.backgroundView addSubview:self.versionLabel];
     }
 
     return self;
@@ -180,9 +161,6 @@
     }
     
     self.backgroundView.frame = CGRectMake(0, 0, totalWidth, kToolbarItemHeight);
-    
-    // 版本号标签 - 放在第一行背景右上角
-    self.versionLabel.frame = CGRectMake(totalWidth - 80, 0, 70, kToolbarItemHeight);
     
     // 第二行背景
     CGFloat secondRowY = kToolbarItemHeight;

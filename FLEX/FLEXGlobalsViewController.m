@@ -25,6 +25,13 @@
 #import "FLEXGlobalsSection.h"
 #import "UIBarButtonItem+FLEX.h"
 
+// FLEX++ 版本号 (由GitHub Actions自动更新)
+#define FLEXXX_VERSION_MAJOR 1
+#define FLEXXX_VERSION_MINOR 0
+#define FLEXXX_VERSION_PATCH 0
+#define FLEXXX_VERSION_BUILD 1
+#define FLEXXX_VERSION_STRING [NSString stringWithFormat:@"v%d.%d.%d-%d", FLEXXX_VERSION_MAJOR, FLEXXX_VERSION_MINOR, FLEXXX_VERSION_PATCH, FLEXXX_VERSION_BUILD]
+
 @interface FLEXGlobalsViewController ()
 // 表视图中仅显示的部分；空部分从此数组中清除。
 @property (nonatomic) NSArray<FLEXGlobalsSection *> *sections;
@@ -170,6 +177,15 @@
     self.showsSearchBar = YES;
     self.searchBarDebounceInterval = kFLEXDebounceInstant;
     self.navigationItem.backBarButtonItem = [UIBarButtonItem flex_backItemWithTitle:@"返回"];
+    
+    // 左上角版本号标签
+    UILabel *versionBadge = [[UILabel alloc] init];
+    versionBadge.text = FLEXXX_VERSION_STRING;
+    versionBadge.font = [UIFont monospacedDigitSystemFontOfSize:11 weight:UIFontWeightMedium];
+    versionBadge.textColor = [UIColor.secondaryLabelColor colorWithAlphaComponent:0.7];
+    versionBadge.textAlignment = NSTextAlignmentLeft;
+    [versionBadge sizeToFit];
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:versionBadge];
     
     _manuallyDeselectOnAppear = NSProcessInfo.processInfo.operatingSystemVersion.majorVersion < 10;
 }

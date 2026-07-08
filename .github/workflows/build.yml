@@ -99,7 +99,7 @@ jobs:
           PATCH="${{ steps.version.outputs.patch }}"
           BUILD="${{ steps.version.outputs.build }}"
 
-          FILE="FLEX/FLEXExplorerToolbar.m"
+          FILE="FLEX/FLEXGlobalsViewController.m"
 
           # 更新版本宏定义
           sed -i '' "s/#define FLEXXX_VERSION_MAJOR [0-9]*/#define FLEXXX_VERSION_MAJOR $MAJOR/" "$FILE"
@@ -107,7 +107,7 @@ jobs:
           sed -i '' "s/#define FLEXXX_VERSION_PATCH [0-9]*/#define FLEXXX_VERSION_PATCH $PATCH/" "$FILE"
           sed -i '' "s/#define FLEXXX_VERSION_BUILD [0-9]*/#define FLEXXX_VERSION_BUILD $BUILD/" "$FILE"
 
-          echo "已更新 FLEXExplorerToolbar.m 中的版本号: v$MAJOR.$MINOR.$PATCH-$BUILD"
+          echo "已更新 FLEXGlobalsViewController.m 中的版本号: v$MAJOR.$MINOR.$PATCH-$BUILD"
           grep "FLEXXX_VERSION_" "$FILE"
 
       # ============ 3. 安装 Theos + ldid ============
@@ -163,7 +163,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          git add FLEXXXVersion FLEX/FLEXExplorerToolbar.m
+          git add FLEXXXVersion FLEX/FLEXGlobalsViewController.m
           
           if git diff --cached --quiet; then
             echo "没有版本变更需要提交"
