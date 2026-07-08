@@ -1,0 +1,15 @@
+Package: com.huami.flexxx
+Name: FLEX++
+Version: 1.0.0-1
+Architecture: iphoneos-arm64
+Author: pxx917144686
+Section: Tweaks
+Depends: firmware (>= 14.0), mobilesubstrate
+Description: FLEX++ - 增强版iOS调试工具
+ 集性能监控/网络抓包/UI调试/逆向分析于一体
+ .
+ CPU/内存/FPS/卡顿四合一性能监控
+ 网络请求抓包+Mock+弱网模拟
+ 3D视图层次检查(Lookin+Reveal)
+ ARM64反汇编+ClassDump
+ Hook检测+崩溃监控

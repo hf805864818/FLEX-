@@ -1,0 +1,32 @@
+# 编译产物
+*.deb
+*.dylib
+*.o
+*.d
+build/
+.obj/
+obj/
+packages/
+
+# Theos
+.theos/
+
+# macOS
+.DS_Store
+__MACOSX/
+._*
+
+# IDE
+.idea/
+.vscode/
+*.xcworkspace
+*.xcuserdata
+
+# Logs
+*.log
+artifacts/
+
+# 临时文件
+*.tmp
+*.swp
+*~
