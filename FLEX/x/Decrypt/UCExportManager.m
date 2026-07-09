@@ -1,5 +1,5 @@
 #import "UCExportManager.h"
-#import "CDZipWriter.h"
+#import "../ClassDump/CDZipWriter.h"
 #import "FLEXActivityViewController.h"
 
 @interface FLEXHTTPTransaction : NSObject
