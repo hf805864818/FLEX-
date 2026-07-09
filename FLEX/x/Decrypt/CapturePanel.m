@@ -413,6 +413,9 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             [db clearTable:@"ssl_certificates"];
             [db clearTable:@"ssl_challenges"];
             [db clearTable:@"rsa_data"];
+            [db clearTable:@"dynamic_hook"];
+            [db clearTable:@"memory_scan"];
+            [db clearTable:@"func_intercept"];
             
             [self.tableView reloadData];
             
