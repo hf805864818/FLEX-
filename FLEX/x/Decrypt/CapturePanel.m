@@ -746,7 +746,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         target:self
         action:@selector(cancelExportMode)];
 
-    self.navigationItem.leftBarButtonItems = @[cancel, selectAll];
+    self.panelVC.navigationItem.leftBarButtonItems = @[cancel, selectAll];
     [self updateExportTitle];
     [self.tableView reloadData];
 }
@@ -754,7 +754,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 - (void)cancelExportMode {
     self.isExportMode = NO;
     self.selectedIndexes = nil;
-    self.navigationItem.leftBarButtonItems = nil;
+    self.panelVC.navigationItem.leftBarButtonItems = nil;
     [self.panelVC restoreExportButton];
     [self.tableView reloadData];
 }
@@ -774,12 +774,12 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 - (void)updateExportTitle {
     NSUInteger count = self.selectedIndexes.count;
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+    self.panelVC.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
         initWithTitle:[NSString stringWithFormat:@"导出(%lu)", (unsigned long)count]
         style:UIBarButtonItemStyleDone
         target:self
         action:@selector(performExport)];
-    self.navigationItem.rightBarButtonItem.enabled = count > 0;
+    self.panelVC.navigationItem.rightBarButtonItem.enabled = count > 0;
 }
 
 - (void)performExport {

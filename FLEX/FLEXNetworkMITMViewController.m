@@ -651,6 +651,10 @@ typedef NS_ENUM(NSInteger, FLEXNetworkObserverMode) {
 
 #pragma mark - 导出模式
 
+- (UIViewController *)exportPanelVC {
+    return self.parentViewController.parentViewController ?: self;
+}
+
 - (void)enterExportMode {
     self.isExportMode = YES;
     self.selectedIndexes = [NSMutableSet set];
@@ -666,7 +670,7 @@ typedef NS_ENUM(NSInteger, FLEXNetworkObserverMode) {
         target:self
         action:@selector(networkCancelExportMode)];
 
-    self.navigationItem.leftBarButtonItems = @[cancelExport, selectAll];
+    self.exportPanelVC.navigationItem.leftBarButtonItems = @[cancelExport, selectAll];
     [self updateExportTitle];
     [self.tableView reloadData];
 }
@@ -674,10 +678,10 @@ typedef NS_ENUM(NSInteger, FLEXNetworkObserverMode) {
 - (void)networkCancelExportMode {
     self.isExportMode = NO;
     self.selectedIndexes = nil;
-    self.navigationItem.leftBarButtonItems = nil;
+    self.exportPanelVC.navigationItem.leftBarButtonItems = nil;
 
-    UIViewController *panel = self.parentViewController ?: self.navigationController.parentViewController;
-    if ([panel isKindOfClass:NSClassFromString(@"CapturePanelViewController")]) {
+    UIViewController *panel = self.parentViewController.parentViewController;
+    if ([panel respondsToSelector:@selector(restoreExportButton)]) {
         [panel performSelector:@selector(restoreExportButton)];
     }
 
@@ -700,12 +704,12 @@ typedef NS_ENUM(NSInteger, FLEXNetworkObserverMode) {
 
 - (void)updateExportTitle {
     NSUInteger count = self.selectedIndexes.count;
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+    self.exportPanelVC.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
         initWithTitle:[NSString stringWithFormat:@"导出(%lu)", (unsigned long)count]
         style:UIBarButtonItemStyleDone
         target:self
         action:@selector(networkPerformExport)];
-    self.navigationItem.rightBarButtonItem.enabled = count > 0;
+    self.exportPanelVC.navigationItem.rightBarButtonItem.enabled = count > 0;
 }
 
 - (void)networkPerformExport {
@@ -723,11 +727,11 @@ typedef NS_ENUM(NSInteger, FLEXNetworkObserverMode) {
         if (success) {
             self.isExportMode = NO;
             self.selectedIndexes = nil;
-            self.navigationItem.leftBarButtonItems = nil;
+            self.exportPanelVC.navigationItem.leftBarButtonItems = nil;
             [self.tableView reloadData];
 
-            UIViewController *panel = self.parentViewController ?: self.navigationController.parentViewController;
-            if ([panel isKindOfClass:NSClassFromString(@"CapturePanelViewController")]) {
+            UIViewController *panel = self.parentViewController.parentViewController;
+            if ([panel respondsToSelector:@selector(restoreExportButton)]) {
                 [panel performSelector:@selector(restoreExportButton)];
             }
         }
