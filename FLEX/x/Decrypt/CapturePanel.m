@@ -919,17 +919,16 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 - (instancetype)init {
     return [self initWithTableName:@"dynamic_hook"
-                       scopeTitles:@[@"全部", @"C函数", @"OC方法", @"Swift方法", @"系统API"]
+                       scopeTitles:@[@"全部", @"网络请求", @"文件操作", @"数据库"]
                          tintColor:[UIColor colorWithRed:0.3 green:0.5 blue:1.0 alpha:1.0]];
 }
 
 - (BOOL)matchesScope:(NSInteger)scope text:(NSString *)text {
     NSString *low = text.lowercaseString;
     switch (scope) {
-        case 1: return [low containsString:@"[c函数]"];
-        case 2: return [low containsString:@"[oc方法]"] || [low containsString:@"实例方法"] || [low containsString:@"类方法"];
-        case 3: return [low containsString:@"[swift]"];
-        case 4: return [low containsString:@"[系统api]"] || [low containsString:@"system"];
+        case 1: return [low containsString:@"nsurlconnection"] || [low containsString:@"nsurlsession"];
+        case 2: return [low containsString:@"nsfilemanager"];
+        case 3: return [low containsString:@"fmdatabase"];
         default: return YES;
     }
 }
@@ -950,17 +949,15 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 - (instancetype)init {
     return [self initWithTableName:@"memory_scan"
-                       scopeTitles:@[@"全部", @"字符串", @"密钥格式", @"加密常量", @"证书"]
+                       scopeTitles:@[@"全部", @"密钥格式", @"加密常量"]
                          tintColor:[UIColor colorWithRed:1.0 green:0.4 blue:0.6 alpha:1.0]];
 }
 
 - (BOOL)matchesScope:(NSInteger)scope text:(NSString *)text {
     NSString *low = text.lowercaseString;
     switch (scope) {
-        case 1: return [low containsString:@"字符串"];
-        case 2: return [low containsString:@"密钥"] || [low containsString:@"aes"] || [low containsString:@"hex"];
-        case 3: return [low containsString:@"常量"] || [low containsString:@"s-box"];
-        case 4: return [low containsString:@"证书"] || [low containsString:@"pem"] || [low containsString:@"begin"];
+        case 1: return [low containsString:@"密钥格式"];
+        case 2: return [low containsString:@"加密常量"];
         default: return YES;
     }
 }
@@ -981,7 +978,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 - (instancetype)init {
     return [self initWithTableName:@"func_intercept"
-                       scopeTitles:@[@"全部", @"加密", @"签名", @"网络", @"文件", @"数据库"]
+                       scopeTitles:@[@"全部", @"加密", @"网络"]
                          tintColor:[UIColor colorWithRed:0.1 green:0.7 blue:0.9 alpha:1.0]];
 }
 
@@ -989,10 +986,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     NSString *low = text.lowercaseString;
     switch (scope) {
         case 1: return [low containsString:@"加密"] || [low containsString:@"encrypt"] || [low containsString:@"decrypt"];
-        case 2: return [low containsString:@"签名"] || [low containsString:@"sign"] || [low containsString:@"hmac"];
-        case 3: return [low containsString:@"网络"] || [low containsString:@"http"] || [low containsString:@"connect"];
-        case 4: return [low containsString:@"文件"] || [low containsString:@"write"] || [low containsString:@"file"];
-        case 5: return [low containsString:@"数据库"] || [low containsString:@"sqlite"] || [low containsString:@"db"];
+        case 2: return [low containsString:@"网络"] || [low containsString:@"http"] || [low containsString:@"connect"];
         default: return YES;
     }
 }
