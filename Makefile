@@ -68,6 +68,10 @@ $(TWEAK_NAME)_CFLAGS += -DCAPSTONE_HAS_ARM -DCAPSTONE_HAS_AARCH64 -DCAPSTONE_USE
 
 # 框架
 $(TWEAK_NAME)_FRAMEWORKS = UIKit Foundation Security Metal MetalKit CoreImage SwiftUI Combine
+$(TWEAK_NAME)_FRAMEWORKS += AVFoundation WebKit QuartzCore CFNetwork Photos QuickLook LocalAuthentication UserNotifications
+
+# 系统库
+$(TWEAK_NAME)_LIBRARIES = sqlite3 z
 
 # 链接器
 $(TWEAK_NAME)_LDFLAGS += -Xlinker -no_adhoc_codesign -Xlinker -objc_abi_version -Xlinker 2
