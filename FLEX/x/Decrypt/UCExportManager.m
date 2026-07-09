@@ -56,7 +56,7 @@
             NSString *filename = [NSString stringWithFormat:@"%02ld_%@.txt", (long)(i + 1), safe];
             NSString *filePath = [exportDir stringByAppendingPathComponent:filename];
             [text writeToFile:filePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-            [fileNames addObject:filename];
+            [fileNames addObject:filePath];
         }
 
         NSString *zipName = [NSString stringWithFormat:@"FLEX_%@_%lu条.zip", tableName, (unsigned long)items.count];
@@ -147,7 +147,7 @@
             NSString *filePath = [exportDir stringByAppendingPathComponent:filename];
 
             [content writeToFile:filePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-            [fileNames addObject:filename];
+            [fileNames addObject:filePath];
         }
 
         NSString *zipName = [NSString stringWithFormat:@"FLEX_network_%lu条.zip", (unsigned long)transactions.count];

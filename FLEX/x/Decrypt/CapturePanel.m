@@ -754,7 +754,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 - (void)cancelExportMode {
     self.isExportMode = NO;
     self.selectedIndexes = nil;
-    self.panelVC.navigationItem.leftBarButtonItems = nil;
+    [self.panelVC restoreLeftBarButton];
     [self.panelVC restoreExportButton];
     [self.tableView reloadData];
 }
@@ -1070,7 +1070,10 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         target:self
         action:@selector(exportTapped)];
 
-    self.navigationItem.rightBarButtonItems = @[trash, settings, self.exportButton];
+    UIBarButtonItem *space = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
+    space.width = 4.0;
+
+    self.navigationItem.rightBarButtonItems = @[trash, space, settings, space, self.exportButton];
 }
 
 - (void)settingsTapped {
@@ -1189,6 +1192,14 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 - (void)restoreExportButton {
     [self updateRightBarButtonItems];
+}
+
+- (void)restoreLeftBarButton {
+    UIBarButtonItem *close = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+        target:self
+        action:@selector(closeAction)];
+    self.navigationItem.leftBarButtonItem = close;
 }
 
 - (void)handleNetworkExport {
