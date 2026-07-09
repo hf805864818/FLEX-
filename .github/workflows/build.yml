@@ -102,16 +102,17 @@ jobs:
 
           FILE="FLEX/FLEXGlobalsViewController.m"
 
+          VERSION_BLOCK="// FLEX++ 版本号 (由GitHub Actions自动更新)
+#define FLEXXX_VERSION_MAJOR $MAJOR
+#define FLEXXX_VERSION_MINOR $MINOR
+#define FLEXXX_VERSION_PATCH $PATCH
+#define FLEXXX_VERSION_BUILD $BUILD
+#define FLEXXX_VERSION_STRING [NSString stringWithFormat:@\"v%d.%d.%d-%d\", FLEXXX_VERSION_MAJOR, FLEXXX_VERSION_MINOR, FLEXXX_VERSION_PATCH, FLEXXX_VERSION_BUILD]"
+
           # 检查是否已有版本号宏，如果没有则插入
           if ! grep -q "FLEXXX_VERSION_MAJOR" "$FILE"; then
-            # 在第一个 #import 行之后插入版本号宏
-            sed -i '' '/^#import "FLEXGlobalsSection.h"/a\\
-          // FLEX++ 版本号 (由GitHub Actions自动更新)\
-          #define FLEXXX_VERSION_MAJOR '"$MAJOR"'\\
-          #define FLEXXX_VERSION_MINOR '"$MINOR"'\\
-          #define FLEXXX_VERSION_PATCH '"$PATCH"'\\
-          #define FLEXXX_VERSION_BUILD '"$BUILD"'\\
-          #define FLEXXX_VERSION_STRING [NSString stringWithFormat:@"v%d.%d.%d-%d", FLEXXX_VERSION_MAJOR, FLEXXX_VERSION_MINOR, FLEXXX_VERSION_PATCH, FLEXXX_VERSION_BUILD]' "$FILE"
+            # 用 awk 在 #import "FLEXGlobalsSection.h" 之后插入
+            awk -v block="$VERSION_BLOCK" '/^#import "FLEXGlobalsSection.h"$/ {print; print block; next} {print}' "$FILE" > "${FILE}.tmp" && mv "${FILE}.tmp" "$FILE"
           else
             # 已有宏定义，只更新数值
             sed -i '' "s/#define FLEXXX_VERSION_MAJOR [0-9]*/#define FLEXXX_VERSION_MAJOR $MAJOR/" "$FILE"
