@@ -26,6 +26,8 @@ jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 30
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -193,7 +195,6 @@ jobs:
       # ============ 8. 创建 Release ============
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
-        continue-on-error: true
         with:
           tag_name: v${{ steps.version.outputs.new_version }}
           name: FLEX++ v${{ steps.version.outputs.new_version }}
