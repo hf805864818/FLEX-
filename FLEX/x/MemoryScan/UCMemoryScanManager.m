@@ -4,14 +4,6 @@
 #import <mach-o/dyld.h>
 #import <mach-o/getsect.h>
 
-// extern 声明，避免编译警告
-extern char *getsectdatafromFramework_64(
-    const struct mach_header_64 *mhp,
-    const char *segname,
-    const char *sectname,
-    unsigned long *size
-) __attribute__((weak_import));
-
 static void recordScan(NSString *matchType, NSString *value) {
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
     NSString *text = [NSString stringWithFormat:@"[%@] %@", matchType, value];
@@ -219,27 +211,25 @@ static void recordScan(NSString *matchType, NSString *value) {
         
         recordScan(@"库扫描", [NSString stringWithFormat:@"扫描动态库: %@", libName]);
         
-        // 获取 __cstring 段
-        unsigned long size = 0;
-        char *cstrings = getsectdatafromFramework_64(
+        // 获取 __cstring 段 - 使用 getsectiondata（公开API，无链接问题）
+        unsigned long csize = 0;
+        uint8_t *cdata = getsectiondata(
             (const struct mach_header_64 *)_dyld_get_image_header(i),
-            "__TEXT", "__cstring", &size
+            "__TEXT", "__cstring", &csize
         );
         
-        // 如果 getsectdatafromFramework_64 不可用，尝试 getsectiondata
-        if (!cstrings || size == 0) {
-            unsigned long csize = 0;
-            uint8_t *cdata = getsectiondata(
+        if (!cdata || csize == 0) {
+            // 也试试 __const 段
+            cdata = getsectiondata(
                 (const struct mach_header_64 *)_dyld_get_image_header(i),
-                "__TEXT", "__cstring", &csize
+                "__TEXT", "__const", &csize
             );
-            if (cdata && csize > 0) {
-                cstrings = (char *)cdata;
-                size = csize;
-            }
         }
         
-        if (!cstrings || size == 0) continue;
+        if (!cdata || csize == 0) continue;
+        
+        char *cstrings = (char *)cdata;
+        unsigned long size = csize;
         
         recordScan(@"库扫描", [NSString stringWithFormat:@"%@ __cstring 段大小: %lu bytes",
                                [libName lastPathComponent], size]);
