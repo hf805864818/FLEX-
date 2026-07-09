@@ -23,7 +23,7 @@
     [super viewDidLoad];
 
     self.title = @"设备模拟器";
-    self.view.backgroundColor = [FLEXColor groupBackgroundColor];
+    self.view.backgroundColor = [FLEXColor groupedBackgroundColor];
 
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
         initWithBarButtonSystemItem:UIBarButtonSystemItemDone
