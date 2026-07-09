@@ -909,7 +909,9 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 @interface CapturePanelViewController () <UIPageViewControllerDataSource, UIPageViewControllerDelegate>
 
-@property (nonatomic, strong) UISegmentedControl *segment;
+@property (nonatomic, strong) UIScrollView *tabScrollView;
+@property (nonatomic, strong) UIView *tabIndicator;
+@property (nonatomic, strong) NSArray<UIButton *> *tabButtons;
 @property (nonatomic, strong) UIPageViewController *pageVC;
 @property (nonatomic, strong) NSArray *viewControllers;
 @property (nonatomic) NSInteger currentIndex;
@@ -935,12 +937,8 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         action:@selector(closeAction)];
     self.navigationItem.leftBarButtonItem = close;
 
-    _segment = [[UISegmentedControl alloc] initWithItems:@[@"网络", @"解密", @"密钥", @"算法"]];
-    self.segment.selectedSegmentIndex = 0;
-    self.segment.tintColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0];
-    self.segment.apportionsSegmentWidthsByContent = YES;
-    [self.segment addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
-    self.navigationItem.titleView = self.segment;
+    // 可滑动标签栏
+    [self setupScrollableTabBar];
 
     FLEXNetworkMITMViewController *networkVC = [[FLEXNetworkMITMViewController alloc] init];
     CaptureDecryptListVC *decryptVC = [[CaptureDecryptListVC alloc] init];
@@ -1217,21 +1215,92 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     [networkVC performSelector:@selector(enterExportMode)];
 }
 
-- (void)segmentChanged:(UISegmentedControl *)sender {
-    NSInteger newIndex = sender.selectedSegmentIndex;
-    if (newIndex == self.currentIndex) return;
+- (void)setupScrollableTabBar {
+    NSArray *titles = @[@"网络", @"解密", @"密钥", @"算法"];
+    CGFloat tabH = 30.0;
+    UIColor *normalColor = FLEXColor.deemphasizedTextColor;
+    UIColor *selectedColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0];
+    UIFont *font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+
+    UIView *container = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 200, tabH + 2)];
+    container.clipsToBounds = YES;
+
+    _tabScrollView = [[UIScrollView alloc] initWithFrame:container.bounds];
+    _tabScrollView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _tabScrollView.showsHorizontalScrollIndicator = NO;
+    _tabScrollView.scrollsToTop = NO;
+
+    NSMutableArray *buttons = [NSMutableArray array];
+    CGFloat x = 0;
+
+    for (NSInteger i = 0; i < (NSInteger)titles.count; i++) {
+        NSString *title = titles[i];
+        CGSize textSize = [title sizeWithAttributes:@{NSFontAttributeName: font}];
+        CGFloat btnW = textSize.width + 28;
+        UIButton *btn = [[UIButton alloc] initWithFrame:CGRectMake(x, 0, btnW, tabH)];
+        [btn setTitle:title forState:UIControlStateNormal];
+        btn.titleLabel.font = font;
+        [btn setTitleColor:normalColor forState:UIControlStateNormal];
+        [btn setTitleColor:selectedColor forState:UIControlStateSelected];
+        btn.tag = i;
+        if (i == 0) btn.selected = YES;
+        [btn addTarget:self action:@selector(tabButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+        [_tabScrollView addSubview:btn];
+        [buttons addObject:btn];
+        x += btnW;
+    }
+
+    _tabScrollView.contentSize = CGSizeMake(x, tabH);
+    _tabButtons = buttons;
+
+    // 指示器
+    UIButton *firstBtn = buttons.firstObject;
+    _tabIndicator = [[UIView alloc] initWithFrame:
+        CGRectMake(firstBtn.frame.origin.x + 6, tabH, firstBtn.frame.size.width - 12, 2)];
+    _tabIndicator.backgroundColor = selectedColor;
+    _tabIndicator.layer.cornerRadius = 1;
+    [_tabScrollView addSubview:_tabIndicator];
+
+    [container addSubview:_tabScrollView];
+    self.navigationItem.titleView = container;
+}
+
+- (void)tabButtonTapped:(UIButton *)sender {
+    NSInteger newIndex = sender.tag;
+    if (newIndex == _currentIndex) return;
+    [self switchToTab:newIndex animated:YES];
+}
+
+- (void)switchToTab:(NSInteger)newIndex animated:(BOOL)animated {
+    if (newIndex < 0 || newIndex >= (NSInteger)_tabButtons.count) return;
+    if (newIndex == _currentIndex) return;
 
     UIPageViewControllerNavigationDirection direction =
-        (newIndex > self.currentIndex) ?
+        (newIndex > _currentIndex) ?
         UIPageViewControllerNavigationDirectionForward :
         UIPageViewControllerNavigationDirectionReverse;
 
-    UIViewController *vc = self.viewControllers[newIndex];
-    [self.pageVC setViewControllers:@[vc]
-                         direction:direction
-                          animated:YES
-                        completion:^(BOOL finished) {
-        self.currentIndex = newIndex;
+    // 更新按钮选中状态
+    for (UIButton *btn in _tabButtons) {
+        btn.selected = (btn.tag == newIndex);
+    }
+
+    // 动画移动指示器
+    UIButton *targetBtn = _tabButtons[newIndex];
+    CGRect indicatorFrame = CGRectMake(targetBtn.frame.origin.x + 6,
+                                       targetBtn.frame.origin.y + targetBtn.frame.size.height,
+                                       targetBtn.frame.size.width - 12, 2);
+
+    [UIView animateWithDuration:0.25 animations:^{
+        _tabIndicator.frame = indicatorFrame;
+    }];
+
+    // 滚动使按钮可见
+    [_tabScrollView scrollRectToVisible:CGRectInset(targetBtn.frame, -20, 0) animated:YES];
+
+    UIViewController *vc = _viewControllers[newIndex];
+    [_pageVC setViewControllers:@[vc] direction:direction animated:animated completion:^(BOOL finished) {
+        _currentIndex = newIndex;
         [self updateRightBarButtonItems];
     }];
 }
@@ -1262,8 +1331,19 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         UIViewController *current = pageViewController.viewControllers.firstObject;
         NSInteger index = [self.viewControllers indexOfObject:current];
         if (index != NSNotFound) {
-            self.currentIndex = index;
-            self.segment.selectedSegmentIndex = index;
+            _currentIndex = index;
+            // 同步标签栏
+            for (UIButton *btn in _tabButtons) {
+                btn.selected = (btn.tag == index);
+            }
+            UIButton *targetBtn = _tabButtons[index];
+            CGRect indicatorFrame = CGRectMake(targetBtn.frame.origin.x + 6,
+                                               targetBtn.frame.origin.y + targetBtn.frame.size.height,
+                                               targetBtn.frame.size.width - 12, 2);
+            [UIView animateWithDuration:0.25 animations:^{
+                _tabIndicator.frame = indicatorFrame;
+            }];
+            [_tabScrollView scrollRectToVisible:CGRectInset(targetBtn.frame, -20, 0) animated:YES];
             [self updateRightBarButtonItems];
         }
     }
