@@ -18,4 +18,7 @@ typedef NS_ENUM(NSUInteger, FLEXGlobalsSectionKind) {
 
 @interface FLEXGlobalsViewController : FLEXFilteringTableViewController
 
+/// FLEX++ 版本号字符串
++ (NSString *)flexVersionString;
+
 @end

@@ -172,7 +172,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    self.title = [NSString stringWithFormat:@"💪  FLEX %@", FLEXXX_VERSION_STRING];
+    self.title = @"💪  FLEX";
     self.showsSearchBar = YES;
     self.searchBarDebounceInterval = kFLEXDebounceInstant;
     self.navigationItem.backBarButtonItem = [UIBarButtonItem flex_backItemWithTitle:@"返回"];
@@ -188,6 +188,10 @@
     if (self.manuallyDeselectOnAppear) {
         [self.tableView deselectRowAtIndexPath:self.tableView.indexPathForSelectedRow animated:YES];
     }
+}
+
++ (NSString *)flexVersionString {
+    return FLEXXX_VERSION_STRING;
 }
 
 - (NSArray<FLEXGlobalsSection *> *)makeSections {

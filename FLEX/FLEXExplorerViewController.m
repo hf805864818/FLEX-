@@ -31,7 +31,7 @@
 #import "x/Decrypt/UCDecryptTool.h"
 #import "x/Decrypt/DatabaseManager.h"
 #import "x/AppProtection/UCAppProtectionTool.h"
-#import "FLEXDoKitWeakNetworkViewController.h" 
+#import "x/DeviceSimulator/UCDeviceSimulator.h" 
 
 typedef NS_ENUM(NSUInteger, FLEXExplorerMode) {
     FLEXExplorerModeDefault,
@@ -107,6 +107,9 @@ typedef NS_ENUM(NSUInteger, FLEXExplorerMode) {
     [self.view addSubview:self.explorerToolbar];
     [self setupToolbarActions];
     [self setupToolbarGestures];
+    
+    // 设置版本号到工具栏左上角
+    self.explorerToolbar.versionString = [FLEXGlobalsViewController flexVersionString];
     
     UITapGestureRecognizer *selectionTapGR = [[UITapGestureRecognizer alloc]
         initWithTarget:self action:@selector(handleSelectionTap:)
@@ -559,9 +562,7 @@ typedef NS_ENUM(NSUInteger, FLEXExplorerMode) {
 }
 
 - (void)simulateButtonTapped:(FLEXExplorerToolbarItem *)sender {
-    FLEXDoKitWeakNetworkViewController *vc = [[FLEXDoKitWeakNetworkViewController alloc] init];
-    FLEXNavigationController *nav = [[FLEXNavigationController alloc] initWithRootViewController:vc];
-    [self presentViewController:nav animated:YES completion:nil];
+    [UCDeviceSimulator presentSimulatorPanelFromViewController:self];
 }
 
 - (void)updateButtonStates {

@@ -59,6 +59,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Toolbar item for app protection.
 @property (nonatomic, readonly) FLEXExplorerToolbarItem *protectionItem;
 
+/// Version string displayed in the top-left corner.
+@property (nonatomic, copy) NSString *versionString;
+
 /// A view for moving the entire toolbar.
 @property (nonatomic, readonly) UIView *dragHandle;
 
