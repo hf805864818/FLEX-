@@ -172,11 +172,19 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    self.title = @"💪  FLEX";
+    self.title = @"FLEX";
     self.showsSearchBar = YES;
     self.searchBarDebounceInterval = kFLEXDebounceInstant;
     self.navigationItem.backBarButtonItem = [UIBarButtonItem flex_backItemWithTitle:@"返回"];
-    
+
+    UILabel *versionLabel = [[UILabel alloc] init];
+    versionLabel.font = [UIFont systemFontOfSize:9];
+    versionLabel.textColor = [FLEXColor deemphasizedTextColor];
+    versionLabel.text = FLEXXX_VERSION_STRING;
+    versionLabel.textAlignment = NSTextAlignmentCenter;
+    [versionLabel sizeToFit];
+    self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:versionLabel];
+
     _manuallyDeselectOnAppear = NSProcessInfo.processInfo.operatingSystemVersion.majorVersion < 10;
 }
 

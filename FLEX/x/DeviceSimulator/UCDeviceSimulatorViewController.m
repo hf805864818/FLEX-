@@ -7,7 +7,6 @@
 
 #import "UCDeviceSimulatorViewController.h"
 #import "UCDeviceSimulator.h"
-#import "FLEXGlobalsViewController.h"
 #import "FLEXColor.h"
 
 @interface UCDeviceSimulatorViewController () <UITextFieldDelegate>
@@ -15,7 +14,6 @@
 @property (nonatomic, strong) UITextField *systemVersionField;
 @property (nonatomic, strong) UITextField *appVersionField;
 @property (nonatomic, strong) UILabel *modeLabel;
-@property (nonatomic, strong) UILabel *versionLabel;
 
 @end
 
@@ -38,13 +36,6 @@
 - (void)buildUI {
     CGFloat padding = 16;
     CGFloat y = padding + 80;
-
-    // 版本号 - 左上角小字显示
-    self.versionLabel = [[UILabel alloc] initWithFrame:CGRectMake(padding, padding + 44, self.view.bounds.size.width - padding * 2, 16)];
-    self.versionLabel.font = [UIFont systemFontOfSize:10];
-    self.versionLabel.textColor = [FLEXColor deemphasizedTextColor];
-    self.versionLabel.text = [FLEXGlobalsViewController flexVersionString];
-    [self.view addSubview:self.versionLabel];
 
     // 模式标签
     self.modeLabel = [[UILabel alloc] initWithFrame:CGRectMake(padding, y, self.view.bounds.size.width - padding * 2, 20)];
