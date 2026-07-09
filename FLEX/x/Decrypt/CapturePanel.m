@@ -450,6 +450,12 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 @class CapturePanelViewController;
 
+@interface CapturePanelViewController (ExportSupport)
+
+- (void)restoreExportButton;
+
+@end
+
 @interface CaptureListViewController : FLEXTableViewController
 
 @property (nonatomic, strong) NSArray *allItems;
