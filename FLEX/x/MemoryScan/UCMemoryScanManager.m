@@ -60,13 +60,10 @@ static void recordScan(NSString *matchType, NSString *value) {
     self.scanCount++;
     NSLog(@"[MemoryScan] 第 %lu 次扫描...", (unsigned long)self.scanCount);
 
-    // 扫描所有已注册的 Objective-C 类，查找可疑数据
-    [self scanRegisteredClasses];
-
-    // 扫描 NSUserDefaults 中的敏感 key
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        [self scanRegisteredClasses];
+    });
     [self scanUserDefaults];
-
-    // 扫描 Info.plist 中的敏感信息
     [self scanInfoPlist];
 
     if (self.scanCount >= 6) {
@@ -83,7 +80,6 @@ static void recordScan(NSString *matchType, NSString *value) {
         @try {
             NSString *className = NSStringFromClass(cls);
 
-            // 跳过系统类和 FLEX 自身的类
             if ([className hasPrefix:@"_"] ||
                 [className hasPrefix:@"NS"] ||
                 [className hasPrefix:@"UI"] ||
@@ -109,33 +105,39 @@ static void recordScan(NSString *matchType, NSString *value) {
                 continue;
             }
 
-            // 检查类方法中是否包含加密相关关键词
-            unsigned int methodCount = 0;
-            Method *methods = class_copyMethodList(cls, &methodCount);
-            BOOL hasCrypto = NO;
-
-            for (unsigned int j = 0; j < methodCount && j < 100; j++) {
-                NSString *methodName = NSStringFromSelector(method_getName(methods[j]));
-                NSString *low = methodName.lowercaseString;
-                if ([low containsString:@"encrypt"] || [low containsString:@"decrypt"] ||
-                    [low containsString:@"aes"] || [low containsString:@"des"] ||
-                    [low containsString:@"crypto"] || [low containsString:@"key"] ||
-                    [low containsString:@"sign"] || [low containsString:@"hash"] ||
-                    [low containsString:@"token"]) {
-                    hasCrypto = YES;
-                    break;
-                }
-            }
-            free(methods);
+            BOOL hasCrypto = [self checkCryptoMethodsOnClass:cls]
+                          || [self checkCryptoMethodsOnClass:object_getClass(cls)];
 
             if (hasCrypto) {
                 recordScan(@"加密常量", [NSString stringWithFormat:@"类 %@ 包含加密方法", className]);
             }
         } @catch (NSException *exception) {
-            // 类可能处于半加载状态，跳过
         }
     }
     free(classList);
+}
+
+- (BOOL)checkCryptoMethodsOnClass:(Class)cls {
+    if (!cls) return NO;
+    unsigned int methodCount = 0;
+    Method *methods = class_copyMethodList(cls, &methodCount);
+    if (!methods) return NO;
+
+    BOOL found = NO;
+    for (unsigned int j = 0; j < methodCount && j < 100; j++) {
+        NSString *methodName = NSStringFromSelector(method_getName(methods[j]));
+        NSString *low = methodName.lowercaseString;
+        if ([low containsString:@"encrypt"] || [low containsString:@"decrypt"] ||
+            [low containsString:@"aes"] || [low containsString:@"des"] ||
+            [low containsString:@"crypto"] || [low containsString:@"key"] ||
+            [low containsString:@"sign"] || [low containsString:@"hash"] ||
+            [low containsString:@"token"]) {
+            found = YES;
+            break;
+        }
+    }
+    free(methods);
+    return found;
 }
 
 - (void)scanUserDefaults {

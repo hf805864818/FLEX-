@@ -12,10 +12,6 @@ static void recordHook(NSString *hookType, NSString *className, NSString *method
                                                     text:text];
 }
 
-@interface UCDynamicHookManager ()
-@property (nonatomic, strong) NSMutableArray<NSString *> *hookedMethods;
-@end
-
 @implementation UCDynamicHookManager
 
 + (instancetype)sharedManager {
@@ -25,14 +21,6 @@ static void recordHook(NSString *hookType, NSString *className, NSString *method
         instance = [[UCDynamicHookManager alloc] init];
     });
     return instance;
-}
-
-- (instancetype)init {
-    self = [super init];
-    if (self) {
-        _hookedMethods = [NSMutableArray array];
-    }
-    return self;
 }
 
 static void hookNSURLConnection_sendSync(Class cls) {
@@ -45,7 +33,7 @@ static void hookNSURLConnection_sendSync(Class cls) {
         NSData *(*origFunc)(id, SEL, NSURLRequest *, NSURLResponse **, NSError **) = (void *)orig;
         return origFunc(self, sel, req, resp, err);
     });
-    method_setImplementation(m, replacement);
+    if (replacement) method_setImplementation(m, replacement);
 }
 
 static void hookNSURLConnection_sendAsync(Class cls) {
@@ -58,7 +46,7 @@ static void hookNSURLConnection_sendAsync(Class cls) {
         void (*origFunc)(id, SEL, NSURLRequest *, NSOperationQueue *, void (^)(NSURLResponse *, NSData *, NSError *)) = (void *)orig;
         origFunc(self, sel, req, queue, handler);
     });
-    method_setImplementation(m, replacement);
+    if (replacement) method_setImplementation(m, replacement);
 }
 
 // ─── NSURLSession ───
@@ -73,7 +61,7 @@ static void hookNSURLSession_dataTaskRequest(Class cls) {
         NSURLSessionDataTask *(*origFunc)(id, SEL, NSURLRequest *, void (^)(NSData *, NSURLResponse *, NSError *)) = (void *)orig;
         return origFunc(self, sel, req, handler);
     });
-    method_setImplementation(m, replacement);
+    if (replacement) method_setImplementation(m, replacement);
 }
 
 static void hookNSURLSession_dataTaskURL(Class cls) {
@@ -86,7 +74,7 @@ static void hookNSURLSession_dataTaskURL(Class cls) {
         NSURLSessionDataTask *(*origFunc)(id, SEL, NSURL *, void (^)(NSData *, NSURLResponse *, NSError *)) = (void *)orig;
         return origFunc(self, sel, url, handler);
     });
-    method_setImplementation(m, replacement);
+    if (replacement) method_setImplementation(m, replacement);
 }
 
 static void hookNSURLSession_downloadTask(Class cls) {
@@ -99,7 +87,7 @@ static void hookNSURLSession_downloadTask(Class cls) {
         NSURLSessionDownloadTask *(*origFunc)(id, SEL, NSURLRequest *, void (^)(NSURL *, NSURLResponse *, NSError *)) = (void *)orig;
         return origFunc(self, sel, req, handler);
     });
-    method_setImplementation(m, replacement);
+    if (replacement) method_setImplementation(m, replacement);
 }
 
 static void hookNSURLSession_uploadTask(Class cls) {
@@ -112,10 +100,8 @@ static void hookNSURLSession_uploadTask(Class cls) {
         NSURLSessionUploadTask *(*origFunc)(id, SEL, NSURLRequest *, NSData *, void (^)(NSData *, NSURLResponse *, NSError *)) = (void *)orig;
         return origFunc(self, sel, req, bodyData, handler);
     });
-    method_setImplementation(m, replacement);
+    if (replacement) method_setImplementation(m, replacement);
 }
-
-// ─── NSFileManager ───
 
 static void hookNSFileManager_createFile(Class cls) {
     SEL sel = @selector(createFileAtPath:contents:attributes:);
@@ -127,7 +113,7 @@ static void hookNSFileManager_createFile(Class cls) {
         BOOL (*origFunc)(id, SEL, NSString *, NSData *, NSDictionary *) = (void *)orig;
         return origFunc(self, sel, path, data, attr);
     });
-    method_setImplementation(m, replacement);
+    if (replacement) method_setImplementation(m, replacement);
 }
 
 static void hookNSFileManager_copyItem(Class cls) {
@@ -140,7 +126,7 @@ static void hookNSFileManager_copyItem(Class cls) {
         BOOL (*origFunc)(id, SEL, NSString *, NSString *, NSError **) = (void *)orig;
         return origFunc(self, sel, src, dst, err);
     });
-    method_setImplementation(m, replacement);
+    if (replacement) method_setImplementation(m, replacement);
 }
 
 static void hookNSFileManager_moveItem(Class cls) {
@@ -153,10 +139,8 @@ static void hookNSFileManager_moveItem(Class cls) {
         BOOL (*origFunc)(id, SEL, NSString *, NSString *, NSError **) = (void *)orig;
         return origFunc(self, sel, src, dst, err);
     });
-    method_setImplementation(m, replacement);
+    if (replacement) method_setImplementation(m, replacement);
 }
-
-// ─── FMDatabase ───
 
 static void hookFMDatabase_executeUpdate(Class cls) {
     SEL sel = @selector(executeUpdate:withArgumentsInArray:orDictionary:orVAList:);
@@ -168,7 +152,7 @@ static void hookFMDatabase_executeUpdate(Class cls) {
         BOOL (*origFunc)(id, SEL, NSString *, NSArray *, NSDictionary *, va_list) = (void *)orig;
         return origFunc(self, sel, sql, args, dict, list);
     });
-    method_setImplementation(m, replacement);
+    if (replacement) method_setImplementation(m, replacement);
 }
 
 static void hookFMDatabase_executeQuery(Class cls) {
@@ -181,7 +165,7 @@ static void hookFMDatabase_executeQuery(Class cls) {
         id (*origFunc)(id, SEL, NSString *, NSArray *, NSDictionary *, va_list) = (void *)orig;
         return origFunc(self, sel, sql, args, dict, list);
     });
-    method_setImplementation(m, replacement);
+    if (replacement) method_setImplementation(m, replacement);
 }
 
 // ─── installHooks ───
