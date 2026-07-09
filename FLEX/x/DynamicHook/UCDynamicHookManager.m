@@ -1,8 +1,6 @@
 #import "UCDynamicHookManager.h"
 #import "../Decrypt/DatabaseManager.h"
-#import <substrate.h>
 #import <objc/runtime.h>
-#import <dlfcn.h>
 
 static void recordHook(NSString *hookType, NSString *className, NSString *methodName, NSString *extra) {
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
@@ -12,10 +10,6 @@ static void recordHook(NSString *hookType, NSString *className, NSString *method
     [[DatabaseManager sharedManager] insertDataIntoTable:@"dynamic_hook"
                                                 bundleID:bundleID
                                                     text:text];
-}
-
-static void dynamicHookCallback(NSString *className, NSString *methodName, NSString *hookType) {
-    recordHook(hookType, className, methodName, @"运行时代码Hook");
 }
 
 @interface UCDynamicHookManager ()
@@ -41,66 +35,188 @@ static void dynamicHookCallback(NSString *className, NSString *methodName, NSStr
     return self;
 }
 
-static void installMethodHook(Class cls, SEL sel, NSString *hookType) {
-    Method m = class_getInstanceMethod(cls, sel);
-    if (!m) {
-        m = class_getClassMethod(cls, sel);
-        if (!m) return;
-    }
+// ─── NSURLConnection ───
 
-    NSString *className = NSStringFromClass(cls);
-    NSString *methodName = NSStringFromSelector(sel);
-
-    IMP originalIMP = method_getImplementation(m);
-    const char *typeEncoding = method_getTypeEncoding(m);
-
-    IMP newIMP = imp_implementationWithBlock(^(__unsafe_unretained id self, ...) {
-        recordHook(hookType, className, methodName, @"已被拦截");
-        // 无法直接调用可变参数的原始IMP，这里只做记录
-        return;
+static void hookNSURLConnection_sendSync(Class cls) {
+    SEL sel = @selector(sendSynchronousRequest:returningResponse:error:);
+    Method m = class_getClassMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP replacement = imp_implementationWithBlock(^(id self, NSURLRequest *req, NSURLResponse **resp, NSError **err) {
+        recordHook(@"OC方法", @"NSURLConnection", @"sendSynchronousRequest:returningResponse:error:", nil);
+        NSData *(*origFunc)(id, SEL, NSURLRequest *, NSURLResponse **, NSError **) = (void *)orig;
+        return origFunc(self, sel, req, resp, err);
     });
-
-    if (class_addMethod(cls, sel, newIMP, typeEncoding)) {
-        recordHook(hookType, className, methodName, @"新增Hook");
-    } else {
-        method_setImplementation(m, newIMP);
-        recordHook(hookType, className, methodName, @"替换Hook");
-    }
+    method_setImplementation(m, replacement);
 }
 
+static void hookNSURLConnection_sendAsync(Class cls) {
+    SEL sel = @selector(sendAsynchronousRequest:queue:completionHandler:);
+    Method m = class_getClassMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP replacement = imp_implementationWithBlock(^(id self, NSURLRequest *req, NSOperationQueue *queue, void (^handler)(NSURLResponse *, NSData *, NSError *)) {
+        recordHook(@"OC方法", @"NSURLConnection", @"sendAsynchronousRequest:queue:completionHandler:", nil);
+        void (*origFunc)(id, SEL, NSURLRequest *, NSOperationQueue *, void (^)(NSURLResponse *, NSData *, NSError *)) = (void *)orig;
+        origFunc(self, sel, req, queue, handler);
+    });
+    method_setImplementation(m, replacement);
+}
+
+// ─── NSURLSession ───
+
+static void hookNSURLSession_dataTaskRequest(Class cls) {
+    SEL sel = @selector(dataTaskWithRequest:completionHandler:);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP replacement = imp_implementationWithBlock(^(NSURLSession *self, NSURLRequest *req, void (^handler)(NSData *, NSURLResponse *, NSError *)) {
+        recordHook(@"OC方法", @"NSURLSession", @"dataTaskWithRequest:completionHandler:", nil);
+        NSURLSessionDataTask *(*origFunc)(id, SEL, NSURLRequest *, void (^)(NSData *, NSURLResponse *, NSError *)) = (void *)orig;
+        return origFunc(self, sel, req, handler);
+    });
+    method_setImplementation(m, replacement);
+}
+
+static void hookNSURLSession_dataTaskURL(Class cls) {
+    SEL sel = @selector(dataTaskWithURL:completionHandler:);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP replacement = imp_implementationWithBlock(^(NSURLSession *self, NSURL *url, void (^handler)(NSData *, NSURLResponse *, NSError *)) {
+        recordHook(@"OC方法", @"NSURLSession", @"dataTaskWithURL:completionHandler:", nil);
+        NSURLSessionDataTask *(*origFunc)(id, SEL, NSURL *, void (^)(NSData *, NSURLResponse *, NSError *)) = (void *)orig;
+        return origFunc(self, sel, url, handler);
+    });
+    method_setImplementation(m, replacement);
+}
+
+static void hookNSURLSession_downloadTask(Class cls) {
+    SEL sel = @selector(downloadTaskWithRequest:completionHandler:);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP replacement = imp_implementationWithBlock(^(NSURLSession *self, NSURLRequest *req, void (^handler)(NSURL *, NSURLResponse *, NSError *)) {
+        recordHook(@"OC方法", @"NSURLSession", @"downloadTaskWithRequest:completionHandler:", nil);
+        NSURLSessionDownloadTask *(*origFunc)(id, SEL, NSURLRequest *, void (^)(NSURL *, NSURLResponse *, NSError *)) = (void *)orig;
+        return origFunc(self, sel, req, handler);
+    });
+    method_setImplementation(m, replacement);
+}
+
+static void hookNSURLSession_uploadTask(Class cls) {
+    SEL sel = @selector(uploadTaskWithRequest:fromData:completionHandler:);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP replacement = imp_implementationWithBlock(^(NSURLSession *self, NSURLRequest *req, NSData *bodyData, void (^handler)(NSData *, NSURLResponse *, NSError *)) {
+        recordHook(@"OC方法", @"NSURLSession", @"uploadTaskWithRequest:fromData:completionHandler:", nil);
+        NSURLSessionUploadTask *(*origFunc)(id, SEL, NSURLRequest *, NSData *, void (^)(NSData *, NSURLResponse *, NSError *)) = (void *)orig;
+        return origFunc(self, sel, req, bodyData, handler);
+    });
+    method_setImplementation(m, replacement);
+}
+
+// ─── NSFileManager ───
+
+static void hookNSFileManager_createFile(Class cls) {
+    SEL sel = @selector(createFileAtPath:contents:attributes:);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP replacement = imp_implementationWithBlock(^(NSFileManager *self, NSString *path, NSData *data, NSDictionary *attr) {
+        recordHook(@"OC方法", @"NSFileManager", @"createFileAtPath:contents:attributes:", [NSString stringWithFormat:@"path=%@", path]);
+        BOOL (*origFunc)(id, SEL, NSString *, NSData *, NSDictionary *) = (void *)orig;
+        return origFunc(self, sel, path, data, attr);
+    });
+    method_setImplementation(m, replacement);
+}
+
+static void hookNSFileManager_copyItem(Class cls) {
+    SEL sel = @selector(copyItemAtPath:toPath:error:);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP replacement = imp_implementationWithBlock(^(NSFileManager *self, NSString *src, NSString *dst, NSError **err) {
+        recordHook(@"OC方法", @"NSFileManager", @"copyItemAtPath:toPath:error:", [NSString stringWithFormat:@"%@ -> %@", src, dst]);
+        BOOL (*origFunc)(id, SEL, NSString *, NSString *, NSError **) = (void *)orig;
+        return origFunc(self, sel, src, dst, err);
+    });
+    method_setImplementation(m, replacement);
+}
+
+static void hookNSFileManager_moveItem(Class cls) {
+    SEL sel = @selector(moveItemAtPath:toPath:error:);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP replacement = imp_implementationWithBlock(^(NSFileManager *self, NSString *src, NSString *dst, NSError **err) {
+        recordHook(@"OC方法", @"NSFileManager", @"moveItemAtPath:toPath:error:", [NSString stringWithFormat:@"%@ -> %@", src, dst]);
+        BOOL (*origFunc)(id, SEL, NSString *, NSString *, NSError **) = (void *)orig;
+        return origFunc(self, sel, src, dst, err);
+    });
+    method_setImplementation(m, replacement);
+}
+
+// ─── FMDatabase ───
+
+static void hookFMDatabase_executeUpdate(Class cls) {
+    SEL sel = @selector(executeUpdate:withArgumentsInArray:orDictionary:orVAList:);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP replacement = imp_implementationWithBlock(^(id self, NSString *sql, NSArray *args, NSDictionary *dict, va_list list) {
+        recordHook(@"OC方法", @"FMDatabase", @"executeUpdate:", [NSString stringWithFormat:@"sql=%@", sql ? [sql substringToIndex:MIN(sql.length, 80)] : @"?"]);
+        BOOL (*origFunc)(id, SEL, NSString *, NSArray *, NSDictionary *, va_list) = (void *)orig;
+        return origFunc(self, sel, sql, args, dict, list);
+    });
+    method_setImplementation(m, replacement);
+}
+
+static void hookFMDatabase_executeQuery(Class cls) {
+    SEL sel = @selector(executeQuery:withArgumentsInArray:orDictionary:orVAList:);
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) return;
+    IMP orig = method_getImplementation(m);
+    IMP replacement = imp_implementationWithBlock(^(id self, NSString *sql, NSArray *args, NSDictionary *dict, va_list list) {
+        recordHook(@"OC方法", @"FMDatabase", @"executeQuery:", [NSString stringWithFormat:@"sql=%@", sql ? [sql substringToIndex:MIN(sql.length, 80)] : @"?"]);
+        id (*origFunc)(id, SEL, NSString *, NSArray *, NSDictionary *, va_list) = (void *)orig;
+        return origFunc(self, sel, sql, args, dict, list);
+    });
+    method_setImplementation(m, replacement);
+}
+
+// ─── installHooks ───
+
 - (void)installHooks {
-    // Hook NSURLConnection
     Class connClass = NSClassFromString(@"NSURLConnection");
     if (connClass) {
-        installMethodHook(connClass, NSSelectorFromString(@"sendSynchronousRequest:returningResponse:error:"), @"OC方法");
-        installMethodHook(connClass, NSSelectorFromString(@"sendAsynchronousRequest:queue:completionHandler:"), @"OC方法");
+        hookNSURLConnection_sendSync(connClass);
+        hookNSURLConnection_sendAsync(connClass);
     }
 
-    // Hook NSURLSession
     Class sessionClass = NSClassFromString(@"NSURLSession");
     if (sessionClass) {
-        installMethodHook(sessionClass, NSSelectorFromString(@"dataTaskWithRequest:completionHandler:"), @"OC方法");
-        installMethodHook(sessionClass, NSSelectorFromString(@"dataTaskWithURL:completionHandler:"), @"OC方法");
-        installMethodHook(sessionClass, NSSelectorFromString(@"downloadTaskWithRequest:completionHandler:"), @"OC方法");
-        installMethodHook(sessionClass, NSSelectorFromString(@"uploadTaskWithRequest:fromData:completionHandler:"), @"OC方法");
+        hookNSURLSession_dataTaskRequest(sessionClass);
+        hookNSURLSession_dataTaskURL(sessionClass);
+        hookNSURLSession_downloadTask(sessionClass);
+        hookNSURLSession_uploadTask(sessionClass);
     }
 
-    // Hook NSFileManager - 文件写入
     Class fmClass = NSClassFromString(@"NSFileManager");
     if (fmClass) {
-        installMethodHook(fmClass, NSSelectorFromString(@"createFileAtPath:contents:attributes:"), @"OC方法");
-        installMethodHook(fmClass, NSSelectorFromString(@"copyItemAtPath:toPath:error:"), @"OC方法");
-        installMethodHook(fmClass, NSSelectorFromString(@"moveItemAtPath:toPath:error:"), @"OC方法");
+        hookNSFileManager_createFile(fmClass);
+        hookNSFileManager_copyItem(fmClass);
+        hookNSFileManager_moveItem(fmClass);
     }
 
-    // Hook 数据库操作
-    Class mmClass = NSClassFromString(@"FMDatabase");
-    if (mmClass) {
-        installMethodHook(mmClass, NSSelectorFromString(@"executeUpdate:withArgumentsInArray:orDictionary:orVAList:"), @"OC方法");
-        installMethodHook(mmClass, NSSelectorFromString(@"executeQuery:withArgumentsInArray:orDictionary:orVAList:"), @"OC方法");
+    Class dbClass = NSClassFromString(@"FMDatabase");
+    if (dbClass) {
+        hookFMDatabase_executeUpdate(dbClass);
+        hookFMDatabase_executeQuery(dbClass);
     }
 
-    NSLog(@"[DynamicHook] 动态Hook模块已安装");
+    NSLog(@"[DynamicHook] 动态Hook模块已安装 (12 methods)");
 }
 
 @end

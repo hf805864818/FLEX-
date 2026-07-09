@@ -2,6 +2,7 @@
 #import "../Decrypt/DatabaseManager.h"
 #import <substrate.h>
 #import <CommonCrypto/CommonCrypto.h>
+#import <dlfcn.h>
 
 static void recordIntercept(NSString *funcName, NSString *category, NSString *extra) {
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
@@ -67,27 +68,23 @@ static int hooked_getaddrinfo(const char *hostname, const char *servname,
 }
 
 - (void)installHooks {
-    MSImageRef libSystem = MSGetImageByName("/usr/lib/system/libcommonCrypto.dylib");
-    if (libSystem) {
-        MSHookFunction(MSFindSymbol(libSystem, "_CC_SHA1"),
-                       (void *)hooked_CC_SHA1,
-                       (void **)&original_CC_SHA1);
-        MSHookFunction(MSFindSymbol(libSystem, "_CC_SHA256"),
-                       (void *)hooked_CC_SHA256,
-                       (void **)&original_CC_SHA256);
-        MSHookFunction(MSFindSymbol(libSystem, "_CCCrypt"),
-                       (void *)hooked_CCCrypt,
-                       (void **)&original_CCCrypt);
-    }
+    // 优先按库路径查找，失败则全局搜索（兼容不同 iOS 版本）
+    MSImageRef libCrypto = MSGetImageByName("/usr/lib/system/libcommonCrypto.dylib");
 
-    MSImageRef libC = MSGetImageByName("/usr/lib/libSystem.B.dylib");
-    if (libC) {
-        MSHookFunction(MSFindSymbol(libC, "_getaddrinfo"),
-                       (void *)hooked_getaddrinfo,
-                       (void **)&original_getaddrinfo);
-    }
+    void *symSHA1   = libCrypto ? MSFindSymbol(libCrypto, "_CC_SHA1")   : dlsym(RTLD_DEFAULT, "CC_SHA1");
+    void *symSHA256 = libCrypto ? MSFindSymbol(libCrypto, "_CC_SHA256") : dlsym(RTLD_DEFAULT, "CC_SHA256");
+    void *symCCCrypt = libCrypto ? MSFindSymbol(libCrypto, "_CCCrypt")   : dlsym(RTLD_DEFAULT, "CCCrypt");
 
-    NSLog(@"[FuncIntercept] 拦截模块已安装 (4 hooks)");
+    if (symSHA1)   MSHookFunction(symSHA1,   (void *)hooked_CC_SHA1,   (void **)&original_CC_SHA1);
+    if (symSHA256) MSHookFunction(symSHA256, (void *)hooked_CC_SHA256, (void **)&original_CC_SHA256);
+    if (symCCCrypt) MSHookFunction(symCCCrypt, (void *)hooked_CCCrypt, (void **)&original_CCCrypt);
+
+    MSImageRef libSystem = MSGetImageByName("/usr/lib/libSystem.B.dylib");
+    void *symGetAddr = libSystem ? MSFindSymbol(libSystem, "_getaddrinfo") : dlsym(RTLD_DEFAULT, "getaddrinfo");
+    if (symGetAddr) MSHookFunction(symGetAddr, (void *)hooked_getaddrinfo, (void **)&original_getaddrinfo);
+
+    NSUInteger hookCount = (symSHA1 ? 1 : 0) + (symSHA256 ? 1 : 0) + (symCCCrypt ? 1 : 0) + (symGetAddr ? 1 : 0);
+    NSLog(@"[FuncIntercept] 拦截模块已安装 (%lu hooks)", (unsigned long)hookCount);
 }
 
 @end

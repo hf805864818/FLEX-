@@ -82,7 +82,7 @@ static void recordScan(NSString *matchType, NSString *value) {
         Class cls = classList[i];
         NSString *className = NSStringFromClass(cls);
 
-        // 跳过系统类，只关注第三方/App 类
+        // 跳过系统类和 FLEX 自身的类
         if ([className hasPrefix:@"_"] ||
             [className hasPrefix:@"NS"] ||
             [className hasPrefix:@"UI"] ||
@@ -96,7 +96,15 @@ static void recordScan(NSString *matchType, NSString *value) {
             [className hasPrefix:@"CI"] ||
             [className hasPrefix:@"CT"] ||
             [className hasPrefix:@"FB"] ||
-            [className hasPrefix:@"AS"]) {
+            [className hasPrefix:@"AS"] ||
+            [className hasPrefix:@"FLEX"] ||
+            [className hasPrefix:@"Capture"] ||
+            [className hasPrefix:@"UC"] ||
+            [className hasPrefix:@"Database"] ||
+            [className hasPrefix:@"CDZip"] ||
+            [className hasPrefix:@"FH"] ||
+            [className hasPrefix:@"RTB"] ||
+            [className hasPrefix:@"IZX"]) {
             continue;
         }
 
@@ -155,7 +163,22 @@ static void recordScan(NSString *matchType, NSString *value) {
             [lowerKey containsString:@"token"] ||
             [lowerKey containsString:@"url"]) {
             id val = infoPlist[key];
-            recordScan(@"密钥格式", [NSString stringWithFormat:@"Info.plist[%@] = %@", key, val ? [NSString stringWithFormat:@"%@", val] : @"(nil)"]);
+            // 对敏感值仅输出类型和长度，不暴露真实内容
+            NSString *desc;
+            if ([val isKindOfClass:[NSString class]]) {
+                desc = [NSString stringWithFormat:@"(String, %lu chars)", (unsigned long)[(NSString *)val length]];
+            } else if ([val isKindOfClass:[NSNumber class]]) {
+                desc = @"(Number)";
+            } else if ([val isKindOfClass:[NSArray class]]) {
+                desc = [NSString stringWithFormat:@"(Array, %lu items)", (unsigned long)[(NSArray *)val count]];
+            } else if ([val isKindOfClass:[NSDictionary class]]) {
+                desc = [NSString stringWithFormat:@"(Dict, %lu keys)", (unsigned long)[(NSDictionary *)val count]];
+            } else if ([val isKindOfClass:[NSData class]]) {
+                desc = [NSString stringWithFormat:@"(Data, %lu bytes)", (unsigned long)[(NSData *)val length]];
+            } else {
+                desc = [NSString stringWithFormat:@"(%@)", NSStringFromClass([val class])];
+            }
+            recordScan(@"密钥格式", [NSString stringWithFormat:@"Info.plist[%@] = %@", key, desc]);
         }
     }
 }
