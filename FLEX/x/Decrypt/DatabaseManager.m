@@ -87,6 +87,10 @@
     for (NSString *sql in sqls) {
         [self execSQL:sql];
     }
+
+    // 迁移：为已存在的 kaiguan 表添加新列（SQLite 不自动 ALTER TABLE）
+    [self execSQL:@"ALTER TABLE kaiguan ADD COLUMN dynamic_hook_enabled INTEGER DEFAULT 0"];
+    [self execSQL:@"ALTER TABLE kaiguan ADD COLUMN func_intercept_enabled INTEGER DEFAULT 0"];
 }
 
 - (BOOL)isAllowedTable:(NSString *)table {

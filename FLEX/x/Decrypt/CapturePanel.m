@@ -1175,10 +1175,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         target:self
         action:@selector(exportTapped)];
 
-    UIBarButtonItem *space = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
-    space.width = 0.0;
-
-    self.navigationItem.rightBarButtonItems = @[trash, space, settings, space, self.exportButton];
+    self.navigationItem.rightBarButtonItems = @[trash, settings, self.exportButton];
 }
 
 - (void)settingsTapped {
