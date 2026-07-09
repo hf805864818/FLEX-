@@ -1014,7 +1014,6 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 @property (nonatomic, strong) UIPageViewController *pageVC;
 @property (nonatomic, strong) NSArray *viewControllers;
 @property (nonatomic) NSInteger currentIndex;
-@property (nonatomic, strong) UIBarButtonItem *exportButton;
 @property (nonatomic, assign) BOOL isNetworkExportMode;
 
 - (void)restoreLeftBarButton;
@@ -1157,25 +1156,31 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 }
 
 - (void)updateRightBarButtonItems {
-    UIBarButtonItem *settings = [[UIBarButtonItem alloc]
-        initWithImage:FLEXResources.gearIcon
-        style:UIBarButtonItemStylePlain
-        target:self
-        action:@selector(settingsTapped)];
+    // 用一个 UIStackView 包装三个按钮，彻底控制间距
+    UIStackView *stack = [[UIStackView alloc] init];
+    stack.axis = UILayoutConstraintAxisHorizontal;
+    stack.spacing = -4;  // 负间距抵消 iOS 默认内边距
+    stack.alignment = UIStackViewAlignmentCenter;
+    stack.distribution = UIStackViewDistributionEqualSpacing;
 
-    UIBarButtonItem *trash = [[UIBarButtonItem alloc]
-        initWithBarButtonSystemItem:UIBarButtonSystemItemTrash
-        target:self
-        action:@selector(trashTapped)];
-    trash.tintColor = UIColor.redColor;
+    UIButton *trashBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    [trashBtn setImage:[UIImage systemImageNamed:@"trash"] forState:UIControlStateNormal];
+    trashBtn.tintColor = UIColor.redColor;
+    [trashBtn addTarget:self action:@selector(trashTapped) forControlEvents:UIControlEventTouchUpInside];
 
-    self.exportButton = [[UIBarButtonItem alloc]
-        initWithImage:[UIImage systemImageNamed:@"square.and.arrow.up"]
-        style:UIBarButtonItemStylePlain
-        target:self
-        action:@selector(exportTapped)];
+    UIButton *settingsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    [settingsBtn setImage:FLEXResources.gearIcon forState:UIControlStateNormal];
+    [settingsBtn addTarget:self action:@selector(settingsTapped) forControlEvents:UIControlEventTouchUpInside];
 
-    self.navigationItem.rightBarButtonItems = @[trash, settings, self.exportButton];
+    UIButton *exportBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    [exportBtn setImage:[UIImage systemImageNamed:@"square.and.arrow.up"] forState:UIControlStateNormal];
+    [exportBtn addTarget:self action:@selector(exportTapped) forControlEvents:UIControlEventTouchUpInside];
+
+    [stack addArrangedSubview:trashBtn];
+    [stack addArrangedSubview:settingsBtn];
+    [stack addArrangedSubview:exportBtn];
+
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithCustomView:stack];
 }
 
 - (void)settingsTapped {
@@ -1332,8 +1337,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         listVC.panelVC = self;
         [listVC enterExportMode];
 
-        self.navigationItem.rightBarButtonItems = nil;
-        self.exportButton = nil;
+        self.navigationItem.rightBarButtonItem = nil;
     }
 }
 
@@ -1354,8 +1358,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     if (![networkVC respondsToSelector:@selector(enterExportMode)]) return;
 
     self.isNetworkExportMode = YES;
-    self.navigationItem.rightBarButtonItems = nil;
-    self.exportButton = nil;
+    self.navigationItem.rightBarButtonItem = nil;
     [networkVC performSelector:@selector(enterExportMode)];
 }
 

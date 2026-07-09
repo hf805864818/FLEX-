@@ -1,6 +1,6 @@
 #import "UCFuncInterceptManager.h"
 #import "../Decrypt/DatabaseManager.h"
-#import <substrate.h>
+#import "../Decrypt/fishhook.h"
 #import <CommonCrypto/CommonCrypto.h>
 #import <dlfcn.h>
 
@@ -14,9 +14,10 @@ static void recordIntercept(NSString *funcName, NSString *category, NSString *ex
 
 // ──────────────────── 加密函数拦截 ────────────────────
 
-static void *(*original_CC_SHA1)(const void *, CC_LONG, unsigned char *) = NULL;
-static void *(*original_CC_SHA256)(const void *, CC_LONG, unsigned char *) = NULL;
-static CCCryptorStatus (*original_CCCrypt)(CCOperation, CCAlgorithm, CCOptions, const void *, size_t, const void *, const void *, size_t, void *, size_t, size_t *) = NULL;
+static unsigned char *(*original_CC_SHA1)(const void *, CC_LONG, unsigned char *) = NULL;
+static unsigned char *(*original_CC_SHA256)(const void *, CC_LONG, unsigned char *) = NULL;
+static CCCryptorStatus (*original_CCCrypt)(CCOperation, CCAlgorithm, CCOptions,
+    const void *, size_t, const void *, const void *, size_t, void *, size_t, size_t *) = NULL;
 
 static unsigned char *hooked_CC_SHA1(const void *data, CC_LONG len, unsigned char *md) {
     recordIntercept(@"CC_SHA1", @"加密", [NSString stringWithFormat:@"len=%u", len]);
@@ -54,7 +55,7 @@ static int hooked_getaddrinfo(const char *hostname, const char *servname,
     return original_getaddrinfo(hostname, servname, hints, res);
 }
 
-// ──────────────────── 安装Hook ────────────────────
+// ──────────────────── 安装Hook（使用 fishhook 而非 Substrate，兼容 iOS 17）────────────────────
 
 @implementation UCFuncInterceptManager
 
@@ -68,23 +69,22 @@ static int hooked_getaddrinfo(const char *hostname, const char *servname,
 }
 
 - (void)installHooks {
-    // 优先按库路径查找，失败则全局搜索（兼容不同 iOS 版本）
-    MSImageRef libCrypto = MSGetImageByName("/usr/lib/system/libcommonCrypto.dylib");
+    struct rebinding rebindings[] = {
+        {"CC_SHA1",   hooked_CC_SHA1,   (void *)&original_CC_SHA1},
+        {"CC_SHA256", hooked_CC_SHA256, (void *)&original_CC_SHA256},
+        {"CCCrypt",   hooked_CCCrypt,   (void *)&original_CCCrypt},
+        {"getaddrinfo", hooked_getaddrinfo, (void *)&original_getaddrinfo},
+    };
 
-    void *symSHA1   = libCrypto ? MSFindSymbol(libCrypto, "_CC_SHA1")   : dlsym(RTLD_DEFAULT, "CC_SHA1");
-    void *symSHA256 = libCrypto ? MSFindSymbol(libCrypto, "_CC_SHA256") : dlsym(RTLD_DEFAULT, "CC_SHA256");
-    void *symCCCrypt = libCrypto ? MSFindSymbol(libCrypto, "_CCCrypt")   : dlsym(RTLD_DEFAULT, "CCCrypt");
+    rebind_symbols(rebindings, sizeof(rebindings) / sizeof(struct rebinding));
 
-    if (symSHA1)   MSHookFunction(symSHA1,   (void *)hooked_CC_SHA1,   (void **)&original_CC_SHA1);
-    if (symSHA256) MSHookFunction(symSHA256, (void *)hooked_CC_SHA256, (void **)&original_CC_SHA256);
-    if (symCCCrypt) MSHookFunction(symCCCrypt, (void *)hooked_CCCrypt, (void **)&original_CCCrypt);
-
-    MSImageRef libSystem = MSGetImageByName("/usr/lib/libSystem.B.dylib");
-    void *symGetAddr = libSystem ? MSFindSymbol(libSystem, "_getaddrinfo") : dlsym(RTLD_DEFAULT, "getaddrinfo");
-    if (symGetAddr) MSHookFunction(symGetAddr, (void *)hooked_getaddrinfo, (void **)&original_getaddrinfo);
-
-    NSUInteger hookCount = (symSHA1 ? 1 : 0) + (symSHA256 ? 1 : 0) + (symCCCrypt ? 1 : 0) + (symGetAddr ? 1 : 0);
-    NSLog(@"[FuncIntercept] 拦截模块已安装 (%lu hooks)", (unsigned long)hookCount);
+    // 统计实际成功 hook 的数量
+    NSUInteger count = 0;
+    if (original_CC_SHA1) count++;
+    if (original_CC_SHA256) count++;
+    if (original_CCCrypt) count++;
+    if (original_getaddrinfo) count++;
+    NSLog(@"[FuncIntercept] 拦截模块已安装 (%lu hooks via fishhook)", (unsigned long)count);
 }
 
 @end
