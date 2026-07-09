@@ -22,6 +22,12 @@ NS_ASSUME_NONNULL_BEGIN
 /// 模拟的App版本号 (如 "2.0.19")
 @property (nonatomic, copy) NSString *simulatedAppVersion;
 
+/// 模拟的设备型号 (如 "iPhone", "iPad")
+@property (nonatomic, copy) NSString *simulatedModel;
+
+/// 模拟的用户界面风格 (Phone/Pad)
+@property (nonatomic, assign) UIUserInterfaceIdiom simulatedIdiom;
+
 /// 当前设备模式描述
 @property (nonatomic, copy, readonly) NSString *currentModeText;
 
