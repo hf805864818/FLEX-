@@ -145,6 +145,7 @@ jobs:
       # ============ 4. 编译 ============
       - name: Build FLEX++.dylib
         run: |
+          set -o pipefail
           export THEOS=$HOME/theos
           export THEOS_PACKAGE_SCHEME=rootless
           make clean
