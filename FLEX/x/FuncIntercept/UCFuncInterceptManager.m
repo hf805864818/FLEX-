@@ -15,7 +15,7 @@ static void recordIntercept(NSString *funcName, NSString *category, NSString *ex
 
 static void *(*original_CC_SHA1)(const void *, CC_LONG, unsigned char *) = NULL;
 static void *(*original_CC_SHA256)(const void *, CC_LONG, unsigned char *) = NULL;
-static void *(*original_CCCrypt)(CCOperation, CCAlgorithm, CCOptions, const void *, size_t, const void *, const void *, size_t, void *, size_t, size_t *) = NULL;
+static CCCryptorStatus (*original_CCCrypt)(CCOperation, CCAlgorithm, CCOptions, const void *, size_t, const void *, const void *, size_t, void *, size_t, size_t *) = NULL;
 
 static unsigned char *hooked_CC_SHA1(const void *data, CC_LONG len, unsigned char *md) {
     recordIntercept(@"CC_SHA1", @"加密", [NSString stringWithFormat:@"len=%u", len]);
