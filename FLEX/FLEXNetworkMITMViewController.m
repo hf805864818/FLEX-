@@ -22,6 +22,7 @@
 #import "UIBarButtonItem+FLEX.h"
 #import "FLEXResources.h"
 #import "NSUserDefaults+FLEX.h"
+#import "UCExportManager.h"
 
 #define kFirebaseAvailable NSClassFromString(@"FIRDocumentReference")
 #define kWebsocketsAvailable @available(iOS 13.0, *)
@@ -43,6 +44,9 @@ typedef NS_ENUM(NSInteger, FLEXNetworkObserverMode) {
 @property (nonatomic, readonly) FLEXMITMDataSource<FLEXHTTPTransaction *> *HTTPDataSource;
 @property (nonatomic, readonly) FLEXMITMDataSource<FLEXWebsocketTransaction *> *websocketDataSource;
 @property (nonatomic, readonly) FLEXMITMDataSource<FLEXFirebaseTransaction *> *firebaseDataSource;
+
+@property (nonatomic, assign) BOOL isExportMode;
+@property (nonatomic, strong) NSMutableSet<NSNumber *> *selectedIndexes;
 
 @end
 
@@ -479,7 +483,6 @@ typedef NS_ENUM(NSInteger, FLEXNetworkObserverMode) {
     
     cell.transaction = [self transactionAtIndexPath:indexPath];
 
-    // 由于我们从顶部插入，因此从底部分配背景颜色以保持每个事务的一致性。
     NSInteger totalRows = [tableView numberOfRowsInSection:indexPath.section];
     if ((totalRows - indexPath.row) % 2 == 0) {
         cell.backgroundColor = FLEXColor.secondaryBackgroundColor;
@@ -487,10 +490,30 @@ typedef NS_ENUM(NSInteger, FLEXNetworkObserverMode) {
         cell.backgroundColor = FLEXColor.primaryBackgroundColor;
     }
 
+    if (self.isExportMode) {
+        cell.accessoryType = [self.selectedIndexes containsObject:@(indexPath.row)]
+            ? UITableViewCellAccessoryCheckmark
+            : UITableViewCellAccessoryNone;
+    } else {
+        cell.accessoryType = UITableViewCellAccessoryNone;
+    }
+
     return cell;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (self.isExportMode) {
+        NSNumber *idx = @(indexPath.row);
+        if ([self.selectedIndexes containsObject:idx]) {
+            [self.selectedIndexes removeObject:idx];
+        } else {
+            [self.selectedIndexes addObject:idx];
+        }
+        [tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+        [self updateExportTitle];
+        return;
+    }
+
     switch (self.mode) {
         case FLEXNetworkObserverModeREST: {
             FLEXHTTPTransaction *transaction = [self HTTPTransactionAtIndexPath:indexPath];
@@ -624,6 +647,91 @@ typedef NS_ENUM(NSInteger, FLEXNetworkObserverMode) {
 
 - (void)willDismissSearchController:(UISearchController *)searchController {
     [self.tableView reloadData];
+}
+
+#pragma mark - 导出模式
+
+- (void)enterExportMode {
+    self.isExportMode = YES;
+    self.selectedIndexes = [NSMutableSet set];
+
+    UIBarButtonItem *selectAll = [[UIBarButtonItem alloc]
+        initWithTitle:@"全选"
+        style:UIBarButtonItemStylePlain
+        target:self
+        action:@selector(networkSelectAllTapped)];
+    UIBarButtonItem *cancelExport = [[UIBarButtonItem alloc]
+        initWithTitle:@"取消"
+        style:UIBarButtonItemStylePlain
+        target:self
+        action:@selector(networkCancelExportMode)];
+
+    self.navigationItem.leftBarButtonItems = @[cancelExport, selectAll];
+    [self updateExportTitle];
+    [self.tableView reloadData];
+}
+
+- (void)networkCancelExportMode {
+    self.isExportMode = NO;
+    self.selectedIndexes = nil;
+    self.navigationItem.leftBarButtonItems = nil;
+
+    UIViewController *panel = self.parentViewController ?: self.navigationController.parentViewController;
+    if ([panel isKindOfClass:NSClassFromString(@"CapturePanelViewController")]) {
+        [panel performSelector:@selector(restoreExportButton)];
+    }
+
+    [self.tableView reloadData];
+}
+
+- (void)networkSelectAllTapped {
+    NSInteger count = self.dataSource.transactions.count;
+    if (self.selectedIndexes.count == (NSUInteger)count) {
+        [self.selectedIndexes removeAllObjects];
+    } else {
+        [self.selectedIndexes removeAllObjects];
+        for (NSInteger i = 0; i < count; i++) {
+            [self.selectedIndexes addObject:@(i)];
+        }
+    }
+    [self.tableView reloadData];
+    [self updateExportTitle];
+}
+
+- (void)updateExportTitle {
+    NSUInteger count = self.selectedIndexes.count;
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithTitle:[NSString stringWithFormat:@"导出(%lu)", (unsigned long)count]
+        style:UIBarButtonItemStyleDone
+        target:self
+        action:@selector(networkPerformExport)];
+    self.navigationItem.rightBarButtonItem.enabled = count > 0;
+}
+
+- (void)networkPerformExport {
+    if (self.selectedIndexes.count == 0) return;
+
+    NSMutableArray *selected = [NSMutableArray array];
+    for (NSNumber *idx in self.selectedIndexes) {
+        NSInteger i = idx.integerValue;
+        if (i < (NSInteger)self.dataSource.transactions.count) {
+            [selected addObject:self.dataSource.transactions[i]];
+        }
+    }
+
+    [UCExportManager exportNetworkTransactions:selected fromViewController:self completion:^(BOOL success) {
+        if (success) {
+            self.isExportMode = NO;
+            self.selectedIndexes = nil;
+            self.navigationItem.leftBarButtonItems = nil;
+            [self.tableView reloadData];
+
+            UIViewController *panel = self.parentViewController ?: self.navigationController.parentViewController;
+            if ([panel isKindOfClass:NSClassFromString(@"CapturePanelViewController")]) {
+                [panel performSelector:@selector(restoreExportButton)];
+            }
+        }
+    }];
 }
 
 @end

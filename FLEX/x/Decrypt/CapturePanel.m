@@ -13,6 +13,7 @@
 #import "FLEXActivityViewController.h"
 #import "DatabaseManager.h"
 #import "UCDecryptTool.h"
+#import "UCExportManager.h"
 
 #pragma mark - 通知名称定义
 
@@ -447,6 +448,8 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 #pragma mark - 通用列表基类
 
+@class CapturePanelViewController;
+
 @interface CaptureListViewController : FLEXTableViewController
 
 @property (nonatomic, strong) NSArray *allItems;
@@ -456,6 +459,9 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 @property (nonatomic) NSInteger currentScope;
 @property (nonatomic, copy) UIColor *tintColor;
 @property (nonatomic, strong) UILabel *statusLabel;
+@property (nonatomic, assign) BOOL isExportMode;
+@property (nonatomic, strong) NSMutableSet<NSNumber *> *selectedIndexes;
+@property (nonatomic, weak) CapturePanelViewController * _Nullable panelVC;
 
 - (instancetype)initWithTableName:(NSString *)tableName
                        scopeTitles:(NSArray<NSString *> *)scopeTitles
@@ -647,12 +653,33 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     cell.backgroundColor = FLEXColor.primaryBackgroundColor;
     cell.selectedBackgroundView = [[UIView alloc] init];
     cell.selectedBackgroundView.backgroundColor = [FLEXColor secondaryBackgroundColorWithAlpha:0.5];
-    cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+
+    if (self.isExportMode) {
+        cell.accessoryType = [self.selectedIndexes containsObject:@(indexPath.row)]
+            ? UITableViewCellAccessoryCheckmark
+            : UITableViewCellAccessoryNone;
+        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    } else {
+        cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        cell.selectionStyle = UITableViewCellSelectionStyleDefault;
+    }
 
     return cell;
 }
 
 - (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
+    if (self.isExportMode) {
+        NSNumber *idx = @(indexPath.row);
+        if ([self.selectedIndexes containsObject:idx]) {
+            [self.selectedIndexes removeObject:idx];
+        } else {
+            [self.selectedIndexes addObject:idx];
+        }
+        [tableView reloadRowsAtIndexPaths:@[indexPath] withRowAnimation:UITableViewRowAnimationNone];
+        [self updateExportTitle];
+        return;
+    }
+
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
 
     NSDictionary *item = self.filteredItems[indexPath.row];
@@ -696,6 +723,78 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         [preview appendString:t];
     }
     return preview;
+}
+
+- (void)enterExportMode {
+    self.isExportMode = YES;
+    self.selectedIndexes = [NSMutableSet set];
+
+    UIBarButtonItem *selectAll = [[UIBarButtonItem alloc]
+        initWithTitle:@"全选"
+        style:UIBarButtonItemStylePlain
+        target:self
+        action:@selector(selectAllTapped)];
+    UIBarButtonItem *cancel = [[UIBarButtonItem alloc]
+        initWithTitle:@"取消"
+        style:UIBarButtonItemStylePlain
+        target:self
+        action:@selector(cancelExportMode)];
+
+    self.navigationItem.leftBarButtonItems = @[cancel, selectAll];
+    [self updateExportTitle];
+    [self.tableView reloadData];
+}
+
+- (void)cancelExportMode {
+    self.isExportMode = NO;
+    self.selectedIndexes = nil;
+    self.navigationItem.leftBarButtonItems = nil;
+    [self.panelVC restoreExportButton];
+    [self.tableView reloadData];
+}
+
+- (void)selectAllTapped {
+    if (self.selectedIndexes.count == self.filteredItems.count) {
+        [self.selectedIndexes removeAllObjects];
+    } else {
+        [self.selectedIndexes removeAllObjects];
+        for (NSInteger i = 0; i < (NSInteger)self.filteredItems.count; i++) {
+            [self.selectedIndexes addObject:@(i)];
+        }
+    }
+    [self.tableView reloadData];
+    [self updateExportTitle];
+}
+
+- (void)updateExportTitle {
+    NSUInteger count = self.selectedIndexes.count;
+    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+        initWithTitle:[NSString stringWithFormat:@"导出(%lu)", (unsigned long)count]
+        style:UIBarButtonItemStyleDone
+        target:self
+        action:@selector(performExport)];
+    self.navigationItem.rightBarButtonItem.enabled = count > 0;
+}
+
+- (void)performExport {
+    if (self.selectedIndexes.count == 0) return;
+
+    NSMutableArray *selected = [NSMutableArray array];
+    for (NSNumber *idx in self.selectedIndexes) {
+        NSInteger i = idx.integerValue;
+        if (i < (NSInteger)self.filteredItems.count) {
+            [selected addObject:self.filteredItems[i]];
+        }
+    }
+
+    [UCExportManager exportItems:selected
+                       tableName:self.tableName
+              fromViewController:self
+                      completion:^(BOOL success) {
+        if (success) {
+            [self cancelExportMode];
+        }
+    }];
 }
 
 @end
@@ -807,6 +906,8 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 @property (nonatomic, strong) UIPageViewController *pageVC;
 @property (nonatomic, strong) NSArray *viewControllers;
 @property (nonatomic) NSInteger currentIndex;
+@property (nonatomic, strong) UIBarButtonItem *exportButton;
+@property (nonatomic, assign) BOOL isNetworkExportMode;
 
 @end
 
@@ -950,14 +1051,20 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         style:UIBarButtonItemStylePlain
         target:self
         action:@selector(settingsTapped)];
-    
+
     UIBarButtonItem *trash = [[UIBarButtonItem alloc]
         initWithBarButtonSystemItem:UIBarButtonSystemItemTrash
         target:self
         action:@selector(trashTapped)];
     trash.tintColor = UIColor.redColor;
-    
-    self.navigationItem.rightBarButtonItems = @[trash, settings];
+
+    self.exportButton = [[UIBarButtonItem alloc]
+        initWithImage:[UIImage systemImageNamed:@"square.and.arrow.up"]
+        style:UIBarButtonItemStylePlain
+        target:self
+        action:@selector(exportTapped)];
+
+    self.navigationItem.rightBarButtonItems = @[trash, settings, self.exportButton];
 }
 
 - (void)settingsTapped {
@@ -1055,6 +1162,37 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         if (action) action();
     }]];
     [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)exportTapped {
+    if (self.currentIndex == CaptureTabNetwork) {
+        [self handleNetworkExport];
+        return;
+    }
+
+    id vc = self.viewControllers[self.currentIndex];
+    if ([vc isKindOfClass:[CaptureListViewController class]]) {
+        CaptureListViewController *listVC = (CaptureListViewController *)vc;
+        listVC.panelVC = self;
+        [listVC enterExportMode];
+
+        self.navigationItem.rightBarButtonItems = nil;
+        self.exportButton = nil;
+    }
+}
+
+- (void)restoreExportButton {
+    [self updateRightBarButtonItems];
+}
+
+- (void)handleNetworkExport {
+    FLEXNetworkMITMViewController *networkVC = self.viewControllers[CaptureTabNetwork];
+    if (![networkVC respondsToSelector:@selector(enterExportMode)]) return;
+
+    self.isNetworkExportMode = YES;
+    self.navigationItem.rightBarButtonItems = nil;
+    self.exportButton = nil;
+    [networkVC performSelector:@selector(enterExportMode)];
 }
 
 - (void)segmentChanged:(UISegmentedControl *)sender {
