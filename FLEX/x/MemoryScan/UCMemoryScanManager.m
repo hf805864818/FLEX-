@@ -1,6 +1,16 @@
 #import "UCMemoryScanManager.h"
 #import "../Decrypt/DatabaseManager.h"
 #import <objc/runtime.h>
+#import <mach-o/dyld.h>
+#import <mach-o/getsect.h>
+
+// extern 声明，避免编译警告
+extern char *getsectdatafromFramework_64(
+    const struct mach_header_64 *mhp,
+    const char *segname,
+    const char *sectname,
+    unsigned long *size
+) __attribute__((weak_import));
 
 static void recordScan(NSString *matchType, NSString *value) {
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
@@ -62,6 +72,8 @@ static void recordScan(NSString *matchType, NSString *value) {
 
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         [self scanRegisteredClasses];
+        [self scanLoadedLibraries];   // ★ 新增：扫描动态库
+        [self scanProcessMemory];     // ★ 新增：扫描进程内存
     });
     [self scanUserDefaults];
     [self scanInfoPlist];
@@ -188,5 +200,171 @@ static void recordScan(NSString *matchType, NSString *value) {
         }
     }
 }
+
+// ★ 新增：扫描已加载动态库的 __cstring 段，搜索硬编码的 AES Key
+- (void)scanLoadedLibraries {
+    uint32_t imageCount = _dyld_image_count();
+    
+    for (uint32_t i = 0; i < imageCount; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (!name) continue;
+        NSString *libName = [NSString stringWithUTF8String:name];
+        
+        // 只扫描目标应用相关库
+        if (![libName containsString:@"libapp"] &&
+            ![libName containsString:@"libflutter"] &&
+            ![libName containsString:@".app/"]) {
+            continue;
+        }
+        
+        recordScan(@"库扫描", [NSString stringWithFormat:@"扫描动态库: %@", libName]);
+        
+        // 获取 __cstring 段
+        unsigned long size = 0;
+        char *cstrings = getsectdatafromFramework_64(
+            (const struct mach_header_64 *)_dyld_get_image_header(i),
+            "__TEXT", "__cstring", &size
+        );
+        
+        // 如果 getsectdatafromFramework_64 不可用，尝试 getsectiondata
+        if (!cstrings || size == 0) {
+            unsigned long csize = 0;
+            uint8_t *cdata = getsectiondata(
+                (const struct mach_header_64 *)_dyld_get_image_header(i),
+                "__TEXT", "__cstring", &csize
+            );
+            if (cdata && csize > 0) {
+                cstrings = (char *)cdata;
+                size = csize;
+            }
+        }
+        
+        if (!cstrings || size == 0) continue;
+        
+        recordScan(@"库扫描", [NSString stringWithFormat:@"%@ __cstring 段大小: %lu bytes",
+                               [libName lastPathComponent], size]);
+        
+        // 搜索 32 位 hex 字符串（AES-128 Key 格式）
+        NSString *allStrings = [NSString stringWithUTF8String:cstrings];
+        
+        // 搜索已知的ONE平台密钥
+        NSArray *knownKeys = @[
+            @"563e8eeef42931cc858dc0d1080f4f6f",
+            @"368480924a6c78e2e8681551a7cf4c21",
+            @"48b067ec-6cfd-3491-84f5-023eb1e7d562",
+            @"em1oifd0",
+            @"5pkwjhp",
+        ];
+        
+        for (NSString *key in knownKeys) {
+            if ([allStrings containsString:key]) {
+                recordScan(@"已知密钥", [NSString stringWithFormat:
+                    @"[lib: %@] 发现密钥: %@",
+                    [libName lastPathComponent], key]);
+            }
+        }
+        
+        // 搜索 32 位 hex 格式的 AES Key 候选
+        if (allStrings.length > 1000) {
+            NSUInteger searchLen = MIN(allStrings.length, (NSUInteger)5000000);
+            NSString *searchStr = [allStrings substringToIndex:searchLen];
+            
+            // 手动扫描 32 位 hex
+            NSCharacterSet *hexSet = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"];
+            NSMutableString *currentHex = [NSMutableString string];
+            
+            for (NSUInteger j = 0; j < searchStr.length; j++) {
+                unichar c = [searchStr characterAtIndex:j];
+                if ([hexSet characterIsMember:c]) {
+                    [currentHex appendFormat:@"%C", c];
+                    if (currentHex.length == 32) {
+                        // 检查是否包含字母和数字（混合的才是真密钥）
+                        BOOL hasLetter = NO, hasDigit = NO;
+                        for (NSUInteger k = 0; k < 32; k++) {
+                            unichar kc = [currentHex characterAtIndex:k];
+                            if (kc >= '0' && kc <= '9') hasDigit = YES;
+                            else hasLetter = YES;
+                        }
+                        if (hasLetter && hasDigit) {
+                            recordScan(@"AES密钥候选", [NSString stringWithFormat:
+                                @"[lib: %@] 32位hex: %@",
+                                [libName lastPathComponent], currentHex]);
+                        }
+                        [currentHex deleteCharactersInRange:NSMakeRange(0, 1)];
+                    }
+                } else {
+                    [currentHex setString:@""];
+                }
+            }
+            
+            // 搜索 16 位 hex 格式（可能是部分密钥）
+            for (NSUInteger j = 0; j < searchStr.length; j++) {
+                unichar c = [searchStr characterAtIndex:j];
+                if ([hexSet characterIsMember:c]) {
+                    [currentHex appendFormat:@"%C", c];
+                    if (currentHex.length == 16) {
+                        BOOL hasLetter = NO, hasDigit = NO;
+                        for (NSUInteger k = 0; k < 16; k++) {
+                            unichar kc = [currentHex characterAtIndex:k];
+                            if (kc >= '0' && kc <= '9') hasDigit = YES;
+                            else hasLetter = YES;
+                        }
+                        if (hasLetter && hasDigit) {
+                            recordScan(@"密钥候选", [NSString stringWithFormat:
+                                @"[lib: %@] 16位hex: %@",
+                                [libName lastPathComponent], currentHex]);
+                        }
+                        [currentHex deleteCharactersInRange:NSMakeRange(0, 1)];
+                    }
+                } else {
+                    [currentHex setString:@""];
+                }
+            }
+        }
+    }
+}
+
+// ★ 新增：扫描整个进程内存中的 AES Key 特征
+- (void)scanProcessMemory {
+    // 使用 vm_region 遍历进程内存
+    vm_address_t address = 0;
+    vm_size_t size = 0;
+    natural_t depth = 1;
+    
+    while (YES) {
+        struct vm_region_submap_info_64 info;
+        mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
+        
+        kern_return_t kr = vm_region_recurse_64(mach_task_self(),
+                                                &address, &size, &depth,
+                                                (vm_region_info_t)&info, &count);
+        if (kr != KERN_SUCCESS) break;
+        
+        // 只扫描可读且不是空的区域
+        if (info.protection & VM_PROT_READ && size > 0) {
+            // 搜索常见密钥模式
+            const uint8_t *bytes = (const uint8_t *)address;
+            
+            // 搜索 "563e8eee" 开头的模式
+            const uint8_t pattern[] = {0x35, 0x36, 0x33, 0x65, 0x38, 0x65, 0x65, 0x65};
+            for (vm_size_t offset = 0; offset < size - 8; offset++) {
+                if (memcmp(bytes + offset, pattern, 8) == 0) {
+                    // 读取完整的 hex 字符串（最多 32 位）
+                    char hexBuf[33] = {0};
+                    vm_size_t hexLen = MIN((vm_size_t)32, size - offset);
+                    memcpy(hexBuf, bytes + offset, hexLen);
+                    recordScan(@"进程内存密钥", [NSString stringWithUTF8String:hexBuf]);
+                }
+            }
+        }
+        
+        address += size;
+        if (address == 0) break;
+    }
+    
+    recordScan(@"进程扫描", @"进程内存扫描完成");
+}
+
+// ★ 新增扫描到 performMemoryScan 中
 
 @end

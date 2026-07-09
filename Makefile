@@ -60,6 +60,9 @@ CAPSTONE_ARM := $(shell find FLEX/x/capstone/arch/ARM -name "*.c")
 CAPSTONE_ARM64 := $(shell find FLEX/x/capstone/arch/AArch64 -name "*.c")
 $(TWEAK_NAME)_FILES += $(CAPSTONE_CORE) $(CAPSTONE_ARM) $(CAPSTONE_ARM64)
 
+# SocketCapture 模块（捕获 dart:io 请求）
+$(TWEAK_NAME)_FILES += FLEX/x/SocketCapture/UCSocketCaptureManager.m
+
 # 编译标志
 $(TWEAK_NAME)_CFLAGS = -fobjc-arc -w
 $(TWEAK_NAME)_CFLAGS += -Wno-deprecated-declarations -Wno-sign-compare -Wno-pointer-sign

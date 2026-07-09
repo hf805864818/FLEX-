@@ -6,6 +6,9 @@
 
 #import <UIKit/UIKit.h>
 #import "FLEX/FLEX.h"
+#import "FLEX/x/SocketCapture/UCSocketCaptureManager.h"
+#import "FLEX/x/MemoryScan/UCMemoryScanManager.h"
+#import "FLEX/x/Decrypt/UCDecryptTool.h"
 
 %hook UIStatusBarManager
 
@@ -31,5 +34,13 @@
     // 延时加载，确保UI初始化完成后再显示
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [[FLEXManager sharedManager] showExplorer];
+        
+        // ★ 激活Socket层Hook（捕获dart:io请求）
+        [[UCSocketCaptureManager sharedManager] installHooks];
+        NSLog(@"[FLEX++] SocketCapture 模块已启动");
+        
+        // ★ 启动内存扫描（扫描libapp.so找硬编码密钥）
+        [[UCMemoryScanManager sharedManager] startScan];
+        NSLog(@"[FLEX++] MemoryScan 模块已启动");
     });
 }
