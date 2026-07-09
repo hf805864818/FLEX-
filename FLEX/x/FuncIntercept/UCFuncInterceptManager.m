@@ -2,6 +2,7 @@
 #import "../Decrypt/DatabaseManager.h"
 #import "../Decrypt/fishhook.h"
 #import <CommonCrypto/CommonCrypto.h>
+#import <netdb.h>
 
 static void recordIntercept(NSString *funcName, NSString *category, NSString *extra) {
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
