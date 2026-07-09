@@ -27,6 +27,9 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     CaptureTabDecrypt,
     CaptureTabKeys,
     CaptureTabCrypto,
+    CaptureTabDynamicHook,
+    CaptureTabMemoryScan,
+    CaptureTabFuncIntercept,
 };
 
 #pragma mark - 功能开关项
@@ -292,6 +295,8 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             [CaptureSwitchItem itemWithTitle:@"RSA 加密捕获" key:@"rsa_encrypt" desc:@"记录 RSA 加密操作" default:NO],
             [CaptureSwitchItem itemWithTitle:@"RSA 解密捕获" key:@"rsa_decrypt" desc:@"记录 RSA 解密操作" default:NO],
             [CaptureSwitchItem itemWithTitle:@"RSA 签名捕获" key:@"rsa_sign" desc:@"记录 RSA 签名操作" default:NO],
+            [CaptureSwitchItem itemWithTitle:@"动态Hook" key:@"dynamic_hook_enabled" desc:@"启用运行时动态方法Hook" default:NO],
+            [CaptureSwitchItem itemWithTitle:@"函数拦截" key:@"func_intercept_enabled" desc:@"启用敏感函数调用拦截" default:NO],
         ];
     }
     return self;
@@ -905,6 +910,100 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 @end
 
+#pragma mark - 动态Hook列表
+
+@interface DynamicHookListVC : CaptureListViewController
+@end
+
+@implementation DynamicHookListVC
+
+- (instancetype)init {
+    return [self initWithTableName:@"dynamic_hook"
+                       scopeTitles:@[@"全部", @"C函数", @"OC方法", @"Swift方法", @"系统API"]
+                         tintColor:[UIColor colorWithRed:0.3 green:0.5 blue:1.0 alpha:1.0]];
+}
+
+- (BOOL)matchesScope:(NSInteger)scope text:(NSString *)text {
+    NSString *low = text.lowercaseString;
+    switch (scope) {
+        case 1: return [low containsString:@"[c函数]"];
+        case 2: return [low containsString:@"[oc方法]"] || [low containsString:@"实例方法"] || [low containsString:@"类方法"];
+        case 3: return [low containsString:@"[swift]"];
+        case 4: return [low containsString:@"[系统api]"] || [low containsString:@"system"];
+        default: return YES;
+    }
+}
+
+- (UIViewController *)detailViewControllerForItem:(NSDictionary *)item {
+    NSString *text = item[@"longText"] ?: @"";
+    return [[CaptureDetailViewController alloc] initWithText:text title:@"Hook详情"];
+}
+
+@end
+
+#pragma mark - 内存扫描列表
+
+@interface MemoryScanListVC : CaptureListViewController
+@end
+
+@implementation MemoryScanListVC
+
+- (instancetype)init {
+    return [self initWithTableName:@"memory_scan"
+                       scopeTitles:@[@"全部", @"字符串", @"密钥格式", @"加密常量", @"证书"]
+                         tintColor:[UIColor colorWithRed:1.0 green:0.4 blue:0.6 alpha:1.0]];
+}
+
+- (BOOL)matchesScope:(NSInteger)scope text:(NSString *)text {
+    NSString *low = text.lowercaseString;
+    switch (scope) {
+        case 1: return [low containsString:@"字符串"];
+        case 2: return [low containsString:@"密钥"] || [low containsString:@"aes"] || [low containsString:@"hex"];
+        case 3: return [low containsString:@"常量"] || [low containsString:@"s-box"];
+        case 4: return [low containsString:@"证书"] || [low containsString:@"pem"] || [low containsString:@"begin"];
+        default: return YES;
+    }
+}
+
+- (UIViewController *)detailViewControllerForItem:(NSDictionary *)item {
+    NSString *text = item[@"longText"] ?: @"";
+    return [[CaptureDetailViewController alloc] initWithText:text title:@"扫描详情"];
+}
+
+@end
+
+#pragma mark - 函数拦截列表
+
+@interface FuncInterceptListVC : CaptureListViewController
+@end
+
+@implementation FuncInterceptListVC
+
+- (instancetype)init {
+    return [self initWithTableName:@"func_intercept"
+                       scopeTitles:@[@"全部", @"加密", @"签名", @"网络", @"文件", @"数据库"]
+                         tintColor:[UIColor colorWithRed:0.1 green:0.7 blue:0.9 alpha:1.0]];
+}
+
+- (BOOL)matchesScope:(NSInteger)scope text:(NSString *)text {
+    NSString *low = text.lowercaseString;
+    switch (scope) {
+        case 1: return [low containsString:@"加密"] || [low containsString:@"encrypt"] || [low containsString:@"decrypt"];
+        case 2: return [low containsString:@"签名"] || [low containsString:@"sign"] || [low containsString:@"hmac"];
+        case 3: return [low containsString:@"网络"] || [low containsString:@"http"] || [low containsString:@"connect"];
+        case 4: return [low containsString:@"文件"] || [low containsString:@"write"] || [low containsString:@"file"];
+        case 5: return [low containsString:@"数据库"] || [low containsString:@"sqlite"] || [low containsString:@"db"];
+        default: return YES;
+    }
+}
+
+- (UIViewController *)detailViewControllerForItem:(NSDictionary *)item {
+    NSString *text = item[@"longText"] ?: @"";
+    return [[CaptureDetailViewController alloc] initWithText:text title:@"拦截详情"];
+}
+
+@end
+
 #pragma mark - 主面板容器
 
 @interface CapturePanelViewController () <UIPageViewControllerDataSource, UIPageViewControllerDelegate>
@@ -944,8 +1043,11 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     CaptureDecryptListVC *decryptVC = [[CaptureDecryptListVC alloc] init];
     CaptureKeyListVC *keyVC = [[CaptureKeyListVC alloc] init];
     CaptureCryptoListVC *cryptoVC = [[CaptureCryptoListVC alloc] init];
+    DynamicHookListVC *hookVC = [[DynamicHookListVC alloc] init];
+    MemoryScanListVC *memVC = [[MemoryScanListVC alloc] init];
+    FuncInterceptListVC *interceptVC = [[FuncInterceptListVC alloc] init];
 
-    _viewControllers = @[networkVC, decryptVC, keyVC, cryptoVC];
+    _viewControllers = @[networkVC, decryptVC, keyVC, cryptoVC, hookVC, memVC, interceptVC];
     _currentIndex = 0;
 
     _pageVC = [[UIPageViewController alloc]
@@ -1164,6 +1266,51 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             };
             break;
         }
+        case CaptureTabDynamicHook: {
+            title = @"清除动态Hook记录";
+            msg = @"确定清除所有动态Hook记录？";
+            action = ^{
+                [[DatabaseManager sharedManager] clearTable:@"dynamic_hook"];
+                DynamicHookListVC *vc = self.viewControllers[CaptureTabDynamicHook];
+                [vc reloadData];
+                
+                [[NSNotificationCenter defaultCenter]
+                    postNotificationName:CaptureDataUpdatedNotification
+                    object:nil
+                    userInfo:@{CaptureDataUpdatedTableKey: @"dynamic_hook"}];
+            };
+            break;
+        }
+        case CaptureTabMemoryScan: {
+            title = @"清除内存扫描记录";
+            msg = @"确定清除所有内存扫描记录？";
+            action = ^{
+                [[DatabaseManager sharedManager] clearTable:@"memory_scan"];
+                MemoryScanListVC *vc = self.viewControllers[CaptureTabMemoryScan];
+                [vc reloadData];
+                
+                [[NSNotificationCenter defaultCenter]
+                    postNotificationName:CaptureDataUpdatedNotification
+                    object:nil
+                    userInfo:@{CaptureDataUpdatedTableKey: @"memory_scan"}];
+            };
+            break;
+        }
+        case CaptureTabFuncIntercept: {
+            title = @"清除函数拦截记录";
+            msg = @"确定清除所有函数拦截记录？";
+            action = ^{
+                [[DatabaseManager sharedManager] clearTable:@"func_intercept"];
+                FuncInterceptListVC *vc = self.viewControllers[CaptureTabFuncIntercept];
+                [vc reloadData];
+                
+                [[NSNotificationCenter defaultCenter]
+                    postNotificationName:CaptureDataUpdatedNotification
+                    object:nil
+                    userInfo:@{CaptureDataUpdatedTableKey: @"func_intercept"}];
+            };
+            break;
+        }
     }
     
     if (!title) return;
@@ -1216,7 +1363,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 }
 
 - (void)setupScrollableTabBar {
-    NSArray *titles = @[@"网络", @"解密", @"密钥", @"算法"];
+    NSArray *titles = @[@"网络", @"解密", @"密钥", @"算法", @"动态Hook", @"内存扫描", @"函数拦截"];
     CGFloat tabH = 30.0;
     UIColor *normalColor = FLEXColor.deemphasizedTextColor;
     UIColor *selectedColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0];

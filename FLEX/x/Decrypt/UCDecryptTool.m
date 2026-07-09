@@ -1,5 +1,8 @@
 #import "UCDecryptTool.h"
 #import "DatabaseManager.h"
+#import "../FuncIntercept/UCFuncInterceptManager.h"
+#import "../DynamicHook/UCDynamicHookManager.h"
+#import "../MemoryScan/UCMemoryScanManager.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <Security/Security.h>
@@ -92,6 +95,27 @@ NSString *HexStringFromBytes(const void *bytes, size_t length) {
             RegisterURLInterceptHooks();
             ssl2_kill();
             ssl3_kill();
+
+            // 函数拦截模块
+            BOOL funcInterceptEnabled = [[DatabaseManager sharedManager]
+                getSwitch:@"func_intercept_enabled"
+                bundleID:CurrentBundleID()
+                defaultValue:NO];
+            if (funcInterceptEnabled) {
+                [[UCFuncInterceptManager sharedManager] installHooks];
+            }
+
+            // 动态Hook模块
+            BOOL dynamicHookEnabled = [[DatabaseManager sharedManager]
+                getSwitch:@"dynamic_hook_enabled"
+                bundleID:CurrentBundleID()
+                defaultValue:NO];
+            if (dynamicHookEnabled) {
+                [[UCDynamicHookManager sharedManager] installHooks];
+            }
+
+            // 内存扫描模块（始终启用，可通过面板手动控制）
+            [[UCMemoryScanManager sharedManager] startScan];
         }
     });
 }

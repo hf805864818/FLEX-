@@ -78,7 +78,10 @@
         @"CREATE TABLE IF NOT EXISTS decrypt_data (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
         @"CREATE TABLE IF NOT EXISTS url_responses (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
         @"CREATE TABLE IF NOT EXISTS crypto_keys (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
-        @"CREATE TABLE IF NOT EXISTS kaiguan (bundleID TEXT PRIMARY KEY, zongkaiguan INTEGER DEFAULT 0, zhaiyaokaiguan INTEGER DEFAULT 0, hanmiyaokaiguan INTEGER DEFAULT 0, jiamisuanfakaiguan INTEGER DEFAULT 0, ssl3kaiguan INTEGER DEFAULT 0, proxy_bypass INTEGER DEFAULT 0, rsa_encrypt INTEGER DEFAULT 0, rsa_decrypt INTEGER DEFAULT 0, rsa_sign INTEGER DEFAULT 0)"
+        @"CREATE TABLE IF NOT EXISTS dynamic_hook (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
+        @"CREATE TABLE IF NOT EXISTS memory_scan (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
+        @"CREATE TABLE IF NOT EXISTS func_intercept (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
+        @"CREATE TABLE IF NOT EXISTS kaiguan (bundleID TEXT PRIMARY KEY, zongkaiguan INTEGER DEFAULT 0, zhaiyaokaiguan INTEGER DEFAULT 0, hanmiyaokaiguan INTEGER DEFAULT 0, jiamisuanfakaiguan INTEGER DEFAULT 0, ssl3kaiguan INTEGER DEFAULT 0, proxy_bypass INTEGER DEFAULT 0, rsa_encrypt INTEGER DEFAULT 0, rsa_decrypt INTEGER DEFAULT 0, rsa_sign INTEGER DEFAULT 0, dynamic_hook_enabled INTEGER DEFAULT 0, func_intercept_enabled INTEGER DEFAULT 0)"
     ];
 
     for (NSString *sql in sqls) {
@@ -93,7 +96,8 @@
         allowedTables = [NSSet setWithArray:@[@"zhaiyao", @"hanmiyao", @"jiamisuanfa", @"yunxingrizhi",
                                                @"kaiguan", @"ssl_certificates", @"ssl_challenges",
                                                @"ssl_psk", @"proxy_settings", @"rsa_data", @"decrypt_data",
-                                               @"url_responses", @"crypto_keys"]];
+                                               @"url_responses", @"crypto_keys",
+                                               @"dynamic_hook", @"memory_scan", @"func_intercept"]];
     });
     return [allowedTables containsObject:table];
 }
@@ -268,7 +272,8 @@
         allowedSwitches = [NSSet setWithArray:@[@"zongkaiguan", @"zhaiyaokaiguan",
                                                   @"hanmiyaokaiguan", @"jiamisuanfakaiguan",
                                                   @"ssl3kaiguan", @"proxy_bypass", @"rsa_encrypt",
-                                                  @"rsa_decrypt", @"rsa_sign"]];
+                                                  @"rsa_decrypt", @"rsa_sign",
+                                                  @"dynamic_hook_enabled", @"func_intercept_enabled"]];
     });
     return [allowedSwitches containsObject:switchName];
 }
