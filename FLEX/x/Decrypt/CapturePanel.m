@@ -453,6 +453,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 @interface CapturePanelViewController (ExportSupport)
 
 - (void)restoreExportButton;
+- (void)restoreLeftBarButton;
 
 @end
 
