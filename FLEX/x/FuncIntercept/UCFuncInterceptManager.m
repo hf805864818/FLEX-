@@ -1,15 +1,14 @@
 #import "UCFuncInterceptManager.h"
 #import "../Decrypt/DatabaseManager.h"
 #import <substrate.h>
-#import <dlfcn.h>
-#import <mach-o/dyld.h>
+#import <CommonCrypto/CommonCrypto.h>
 
 static void recordIntercept(NSString *funcName, NSString *category, NSString *extra) {
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
     NSString *text = [NSString stringWithFormat:@"[%@] %@ | %@", category, funcName, extra ?: @""];
     [[DatabaseManager sharedManager] insertDataIntoTable:@"func_intercept"
                                                 bundleID:bundleID
-                                                longText:text];
+                                                    text:text];
 }
 
 // ──────────────────── 加密函数拦截 ────────────────────

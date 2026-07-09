@@ -11,7 +11,7 @@ static void recordScan(NSString *matchType, NSString *value) {
     NSString *text = [NSString stringWithFormat:@"[%@] %@", matchType, value];
     [[DatabaseManager sharedManager] insertDataIntoTable:@"memory_scan"
                                                 bundleID:bundleID
-                                                longText:text];
+                                                    text:text];
 }
 
 @interface UCMemoryScanManager ()

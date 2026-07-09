@@ -11,7 +11,7 @@ static void recordHook(NSString *hookType, NSString *className, NSString *method
                       extra ? @" | " : @"", extra ?: @""];
     [[DatabaseManager sharedManager] insertDataIntoTable:@"dynamic_hook"
                                                 bundleID:bundleID
-                                                longText:text];
+                                                    text:text];
 }
 
 static void dynamicHookCallback(NSString *className, NSString *methodName, NSString *hookType) {
