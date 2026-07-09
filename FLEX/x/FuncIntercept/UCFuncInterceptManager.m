@@ -20,12 +20,12 @@ static CCCryptorStatus (*original_CCCrypt)(CCOperation, CCAlgorithm, CCOptions,
 
 static unsigned char *hooked_CC_SHA1(const void *data, CC_LONG len, unsigned char *md) {
     recordIntercept(@"CC_SHA1", @"加密", [NSString stringWithFormat:@"len=%u", len]);
-    return original_CC_SHA1(data, len, md);
+    return original_CC_SHA1 ? original_CC_SHA1(data, len, md) : NULL;
 }
 
 static unsigned char *hooked_CC_SHA256(const void *data, CC_LONG len, unsigned char *md) {
     recordIntercept(@"CC_SHA256", @"加密", [NSString stringWithFormat:@"len=%u", len]);
-    return original_CC_SHA256(data, len, md);
+    return original_CC_SHA256 ? original_CC_SHA256(data, len, md) : NULL;
 }
 
 static CCCryptorStatus hooked_CCCrypt(CCOperation op, CCAlgorithm alg, CCOptions opt,
@@ -39,7 +39,7 @@ static CCCryptorStatus hooked_CCCrypt(CCOperation op, CCAlgorithm alg, CCOptions
     else if (alg == kCCAlgorithm3DES) algStr = @"3DES";
     else if (alg == kCCAlgorithmRC4) algStr = @"RC4";
     recordIntercept(@"CCCrypt", @"加密", [NSString stringWithFormat:@"%@ %@ len=%zu", opStr, algStr, dataInLen]);
-    return original_CCCrypt(op, alg, opt, key, keyLen, iv, dataIn, dataInLen, dataOut, dataOutAvail, dataOutMoved);
+    return original_CCCrypt ? original_CCCrypt(op, alg, opt, key, keyLen, iv, dataIn, dataInLen, dataOut, dataOutAvail, dataOutMoved) : kCCUnimplemented;
 }
 
 // ──────────────────── 网络函数拦截 ────────────────────
@@ -51,7 +51,7 @@ static int hooked_getaddrinfo(const char *hostname, const char *servname,
     if (hostname) {
         recordIntercept(@"getaddrinfo", @"网络", [NSString stringWithFormat:@"host=%s", hostname]);
     }
-    return original_getaddrinfo(hostname, servname, hints, res);
+    return original_getaddrinfo ? original_getaddrinfo(hostname, servname, hints, res) : EAI_FAIL;
 }
 
 // ──────────────────── 安装Hook（使用 fishhook 而非 Substrate，兼容 iOS 17）────────────────────

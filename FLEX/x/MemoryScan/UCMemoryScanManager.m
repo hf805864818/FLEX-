@@ -1,10 +1,6 @@
 #import "UCMemoryScanManager.h"
 #import "../Decrypt/DatabaseManager.h"
-#import <mach/mach.h>
-#import <malloc/malloc.h>
 #import <objc/runtime.h>
-
-static const size_t kMaxScanSize = 4 * 1024 * 1024; // 4MB 上限
 
 static void recordScan(NSString *matchType, NSString *value) {
     NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
@@ -29,6 +25,10 @@ static void recordScan(NSString *matchType, NSString *value) {
         instance = [[UCMemoryScanManager alloc] init];
     });
     return instance;
+}
+
+- (void)dealloc {
+    [self.scanTimer invalidate];
 }
 
 - (void)startScan {
@@ -80,55 +80,59 @@ static void recordScan(NSString *matchType, NSString *value) {
 
     for (unsigned int i = 0; i < classCount && i < 500; i++) {
         Class cls = classList[i];
-        NSString *className = NSStringFromClass(cls);
+        @try {
+            NSString *className = NSStringFromClass(cls);
 
-        // 跳过系统类和 FLEX 自身的类
-        if ([className hasPrefix:@"_"] ||
-            [className hasPrefix:@"NS"] ||
-            [className hasPrefix:@"UI"] ||
-            [className hasPrefix:@"CA"] ||
-            [className hasPrefix:@"CF"] ||
-            [className hasPrefix:@"WK"] ||
-            [className hasPrefix:@"OS"] ||
-            [className hasPrefix:@"AV"] ||
-            [className hasPrefix:@"PK"] ||
-            [className hasPrefix:@"CG"] ||
-            [className hasPrefix:@"CI"] ||
-            [className hasPrefix:@"CT"] ||
-            [className hasPrefix:@"FB"] ||
-            [className hasPrefix:@"AS"] ||
-            [className hasPrefix:@"FLEX"] ||
-            [className hasPrefix:@"Capture"] ||
-            [className hasPrefix:@"UC"] ||
-            [className hasPrefix:@"Database"] ||
-            [className hasPrefix:@"CDZip"] ||
-            [className hasPrefix:@"FH"] ||
-            [className hasPrefix:@"RTB"] ||
-            [className hasPrefix:@"IZX"]) {
-            continue;
-        }
-
-        // 检查类方法中是否包含加密相关关键词
-        unsigned int methodCount = 0;
-        Method *methods = class_copyMethodList(cls, &methodCount);
-        BOOL hasCrypto = NO;
-
-        for (unsigned int j = 0; j < methodCount && j < 100; j++) {
-            NSString *methodName = NSStringFromSelector(method_getName(methods[j]));
-            NSString *low = methodName.lowercaseString;
-            if ([low containsString:@"encrypt"] || [low containsString:@"decrypt"] ||
-                [low containsString:@"aes"] || [low containsString:@"des"] ||
-                [low containsString:@"crypto"] || [low containsString:@"key"] ||
-                [low containsString:@"sign"] || [low containsString:@"hash"] ||
-                [low containsString:@"token"]) {
-                hasCrypto = YES;
-                break;
+            // 跳过系统类和 FLEX 自身的类
+            if ([className hasPrefix:@"_"] ||
+                [className hasPrefix:@"NS"] ||
+                [className hasPrefix:@"UI"] ||
+                [className hasPrefix:@"CA"] ||
+                [className hasPrefix:@"CF"] ||
+                [className hasPrefix:@"WK"] ||
+                [className hasPrefix:@"OS"] ||
+                [className hasPrefix:@"AV"] ||
+                [className hasPrefix:@"PK"] ||
+                [className hasPrefix:@"CG"] ||
+                [className hasPrefix:@"CI"] ||
+                [className hasPrefix:@"CT"] ||
+                [className hasPrefix:@"FB"] ||
+                [className hasPrefix:@"AS"] ||
+                [className hasPrefix:@"FLEX"] ||
+                [className hasPrefix:@"Capture"] ||
+                [className hasPrefix:@"UC"] ||
+                [className hasPrefix:@"Database"] ||
+                [className hasPrefix:@"CDZip"] ||
+                [className hasPrefix:@"FH"] ||
+                [className hasPrefix:@"RTB"] ||
+                [className hasPrefix:@"IZX"]) {
+                continue;
             }
-        }
-        free(methods);
 
-        if (hasCrypto) {
-            recordScan(@"加密常量", [NSString stringWithFormat:@"类 %@ 包含加密方法", className]);
+            // 检查类方法中是否包含加密相关关键词
+            unsigned int methodCount = 0;
+            Method *methods = class_copyMethodList(cls, &methodCount);
+            BOOL hasCrypto = NO;
+
+            for (unsigned int j = 0; j < methodCount && j < 100; j++) {
+                NSString *methodName = NSStringFromSelector(method_getName(methods[j]));
+                NSString *low = methodName.lowercaseString;
+                if ([low containsString:@"encrypt"] || [low containsString:@"decrypt"] ||
+                    [low containsString:@"aes"] || [low containsString:@"des"] ||
+                    [low containsString:@"crypto"] || [low containsString:@"key"] ||
+                    [low containsString:@"sign"] || [low containsString:@"hash"] ||
+                    [low containsString:@"token"]) {
+                    hasCrypto = YES;
+                    break;
+                }
+            }
+            free(methods);
+
+            if (hasCrypto) {
+                recordScan(@"加密常量", [NSString stringWithFormat:@"类 %@ 包含加密方法", className]);
+            }
+        } @catch (NSException *exception) {
+            // 类可能处于半加载状态，跳过
         }
     }
     free(classList);

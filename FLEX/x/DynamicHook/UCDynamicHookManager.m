@@ -35,8 +35,6 @@ static void recordHook(NSString *hookType, NSString *className, NSString *method
     return self;
 }
 
-// ─── NSURLConnection ───
-
 static void hookNSURLConnection_sendSync(Class cls) {
     SEL sel = @selector(sendSynchronousRequest:returningResponse:error:);
     Method m = class_getClassMethod(cls, sel);
