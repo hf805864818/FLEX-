@@ -1153,7 +1153,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     // 用一个 UIStackView 包装三个按钮，彻底控制间距
     UIStackView *stack = [[UIStackView alloc] init];
     stack.axis = UILayoutConstraintAxisHorizontal;
-    stack.spacing = -4;  // 负间距抵消 iOS 默认内边距
+    stack.spacing = 6;
     stack.alignment = UIStackViewAlignmentCenter;
     stack.distribution = UIStackViewDistributionEqualSpacing;
 
