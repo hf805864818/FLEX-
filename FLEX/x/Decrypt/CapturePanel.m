@@ -938,6 +938,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     _segment = [[UISegmentedControl alloc] initWithItems:@[@"网络", @"解密", @"密钥", @"算法"]];
     self.segment.selectedSegmentIndex = 0;
     self.segment.tintColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0];
+    self.segment.apportionsSegmentWidthsByContent = YES;
     [self.segment addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
     self.navigationItem.titleView = self.segment;
 
@@ -1075,7 +1076,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         action:@selector(exportTapped)];
 
     UIBarButtonItem *space = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFixedSpace target:nil action:nil];
-    space.width = 4.0;
+    space.width = 0.0;
 
     self.navigationItem.rightBarButtonItems = @[trash, space, settings, space, self.exportButton];
 }

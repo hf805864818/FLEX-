@@ -684,6 +684,9 @@ typedef NS_ENUM(NSInteger, FLEXNetworkObserverMode) {
     if ([panel respondsToSelector:@selector(restoreExportButton)]) {
         [panel performSelector:@selector(restoreExportButton)];
     }
+    if ([panel respondsToSelector:@selector(restoreLeftBarButton)]) {
+        [panel performSelector:@selector(restoreLeftBarButton)];
+    }
 
     [self.tableView reloadData];
 }
@@ -733,6 +736,9 @@ typedef NS_ENUM(NSInteger, FLEXNetworkObserverMode) {
             UIViewController *panel = self.parentViewController.parentViewController;
             if ([panel respondsToSelector:@selector(restoreExportButton)]) {
                 [panel performSelector:@selector(restoreExportButton)];
+            }
+            if ([panel respondsToSelector:@selector(restoreLeftBarButton)]) {
+                [panel performSelector:@selector(restoreLeftBarButton)];
             }
         }
     }];
