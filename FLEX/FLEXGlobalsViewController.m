@@ -179,7 +179,7 @@
 
     UILabel *versionLabel = [[UILabel alloc] init];
     versionLabel.font = [UIFont systemFontOfSize:9];
-    versionLabel.textColor = [FLEXColor deemphasizedTextColor];
+    versionLabel.textColor = [UIColor grayColor];
     versionLabel.text = FLEXXX_VERSION_STRING;
     versionLabel.textAlignment = NSTextAlignmentCenter;
     [versionLabel sizeToFit];
