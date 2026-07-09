@@ -915,6 +915,9 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 @property (nonatomic, strong) UIBarButtonItem *exportButton;
 @property (nonatomic, assign) BOOL isNetworkExportMode;
 
+- (void)restoreLeftBarButton;
+- (void)restoreExportButton;
+
 @end
 
 @implementation CapturePanelViewController
