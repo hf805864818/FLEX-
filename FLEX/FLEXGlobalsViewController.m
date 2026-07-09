@@ -172,7 +172,7 @@
 - (void)viewDidLoad {
     [super viewDidLoad];
 
-    self.title = @"💪  FLEX";
+    self.title = [NSString stringWithFormat:@"💪  FLEX %@", FLEXXX_VERSION_STRING];
     self.showsSearchBar = YES;
     self.searchBarDebounceInterval = kFLEXDebounceInstant;
     self.navigationItem.backBarButtonItem = [UIBarButtonItem flex_backItemWithTitle:@"返回"];

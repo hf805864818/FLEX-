@@ -30,7 +30,8 @@
 #import "x/filza/UCFilzaTool.h"
 #import "x/Decrypt/UCDecryptTool.h"
 #import "x/Decrypt/DatabaseManager.h"
-#import "x/AppProtection/UCAppProtectionTool.h" 
+#import "x/AppProtection/UCAppProtectionTool.h"
+#import "FLEXDoKitWeakNetworkViewController.h" 
 
 typedef NS_ENUM(NSUInteger, FLEXExplorerMode) {
     FLEXExplorerModeDefault,
@@ -388,6 +389,7 @@ typedef NS_ENUM(NSUInteger, FLEXExplorerMode) {
     [toolbar.decryptItem addTarget:self action:@selector(decryptButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
     [toolbar.filzaItem addTarget:self action:@selector(filzaButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
     [toolbar.protectionItem addTarget:self action:@selector(protectionButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
+    [toolbar.simulateItem addTarget:self action:@selector(simulateButtonTapped:) forControlEvents:UIControlEventTouchUpInside];
 }
 
 - (void)selectButtonTapped:(FLEXExplorerToolbarItem *)sender {
@@ -554,6 +556,12 @@ typedef NS_ENUM(NSUInteger, FLEXExplorerMode) {
 - (void)protectionButtonTapped:(FLEXExplorerToolbarItem *)sender {
     [UCAppProtectionTool enableWithSetup];
     [UCAppProtectionTool presentProtectionPanelFromViewController:self completion:nil];
+}
+
+- (void)simulateButtonTapped:(FLEXExplorerToolbarItem *)sender {
+    FLEXDoKitWeakNetworkViewController *vc = [[FLEXDoKitWeakNetworkViewController alloc] init];
+    FLEXNavigationController *nav = [[FLEXNavigationController alloc] initWithRootViewController:vc];
+    [self presentViewController:nav animated:YES completion:nil];
 }
 
 - (void)updateButtonStates {

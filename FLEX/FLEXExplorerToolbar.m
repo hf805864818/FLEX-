@@ -44,6 +44,7 @@
 @property (nonatomic, readwrite) FLEXExplorerToolbarItem *disassemblerItem;
 @property (nonatomic, readwrite) FLEXExplorerToolbarItem *decryptItem;
 @property (nonatomic, readwrite) FLEXExplorerToolbarItem *filzaItem;
+@property (nonatomic, readwrite) FLEXExplorerToolbarItem *simulateItem;
 @property (nonatomic, readwrite) FLEXExplorerToolbarItem *protectionItem;
 @property (nonatomic) UIView *secondRowBackground;
 
@@ -96,9 +97,9 @@
         self.classdumpItem  = [FLEXExplorerToolbarItem itemWithTitle:@"xx.h" image:[UIImage systemImageNamed:@"doc.text.fill"]];
         self.disassemblerItem = [FLEXExplorerToolbarItem itemWithTitle:@"反汇编" image:[UIImage systemImageNamed:@"cpu.fill"]];
         self.decryptItem    = [FLEXExplorerToolbarItem itemWithTitle:@"抓取" image:[UIImage systemImageNamed:@"lock.open.fill"]];
+        self.simulateItem   = [FLEXExplorerToolbarItem itemWithTitle:@"模拟" image:[UIImage systemImageNamed:@"iphone.gen2"]];
         self.filzaItem      = [FLEXExplorerToolbarItem itemWithTitle:@"Filza" image:[UIImage systemImageNamed:@"folder.fill"]];
         self.protectionItem = [FLEXExplorerToolbarItem itemWithTitle:@"保护" image:[UIImage systemImageNamed:@"shield.fill"]];
-        // 第二行最后一个位置用空白占位，不放按钮
 
         // Selected view box //
         
@@ -123,8 +124,8 @@
         // toolbarItems - 第一行（6个按钮：菜单、视图、选择、最近、移动、关闭）
         self.toolbarItems = @[_globalsItem, _hierarchyItem, _selectItem, _recentItem, _moveItem, _closeItem];
         
-        // secondRowItems - 第二行（6个按钮+空白=7列）
-        self.secondRowItems = @[_classdumpItem, _disassemblerItem, _decryptItem, _filzaItem, _protectionItem];
+        // secondRowItems - 第二行（6个功能按钮）
+        self.secondRowItems = @[_classdumpItem, _disassemblerItem, _decryptItem, _simulateItem, _filzaItem, _protectionItem];
     }
 
     return self;

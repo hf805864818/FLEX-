@@ -53,6 +53,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Toolbar item for filza file browser.
 @property (nonatomic, readonly) FLEXExplorerToolbarItem *filzaItem;
 
+/// Toolbar item for network simulation (模拟).
+@property (nonatomic, readonly) FLEXExplorerToolbarItem *simulateItem;
+
 /// Toolbar item for app protection.
 @property (nonatomic, readonly) FLEXExplorerToolbarItem *protectionItem;
 
