@@ -670,15 +670,164 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 ## 7. 导出机制
 
-三个新功能**无需修改** `UCExportManager`。现有的 `exportItems:tableName:` 方法已经支持任何表名：
+### 7.1 导出完全可用，无需额外开发
 
-| 功能 | 表名 | 导出文件名 |
-|------|------|-----------|
-| 动态Hook | `dynamic_hook` | `FLEX_dynamichook_N条.zip` |
-| 内存扫描 | `memory_scan` | `FLEX_memoryscan_N条.zip` |
-| 函数拦截 | `func_intercept` | `FLEX_funcintercept_N条.zip` |
+三个新功能的抓取数据**完全支持导出**，与现有的"解密""密钥""算法"标签**使用完全相同的导出流程**。原因是整个导出链路是数据表名驱动的，不绑定任何特定标签。
 
-`performExport` 中传入的 `tableName` 自动决定导出内容。
+### 7.2 导出完整数据流
+
+```
+用户在列表页点击右上角"导出"按钮
+  → CaptureListViewController.exportTapped (基类方法)
+    → 进入选择模式: 左侧 [取消/全选], 右侧 [导出(N)]
+    → 用户勾选要导出的条目
+    → 点击 "导出(N)" → performExport
+      → 收集 self.selectedIndexes 对应的 self.filteredItems
+      → [UCExportManager exportItems:tableName:fromViewController:completion:]
+
+UCExportManager.exportItems 内部:
+  1. 创建临时目录 /tmp/FLEXExport/<folderName>/
+     (folderName 由 tableName 去掉下划线生成)
+  2. 遍历 items 数组, 每个 item 是一个 NSDictionary:
+     - item[@"longText"] → 写入 .txt 文件
+     - item[@"timestamp"] → 作为文件名一部分
+     文件名格式: "01_2026-07-09-14-30-00.txt"
+  3. [CDZipWriter createZipAtPath:rootDir:files:]
+     - 将所有 .txt 文件打包为 ZIP (STORED 方式, 无压缩)
+  4. UIActivityViewController 弹出系统分享菜单
+     - 用户可选择: 存储到文件 / 隔空投送 / 微信 等
+```
+
+### 7.3 数据链详解
+
+**数据入库** (Hook 层):
+
+```objc
+// 动态Hook 引擎 — 当 Hook 拦截到调用时:
+NSString *logEntry = [NSString stringWithFormat:
+    @"[Hook] %@\n类名: %@\n方法: %@\n参数: %@\n返回值: %@\n耗时: %.3fms",
+    timestamp, className, methodName, args, retVal, elapsed];
+
+[[DatabaseManager sharedManager]
+    insertDataIntoTable:@"dynamic_hook"
+               bundleID:CurrentBundleID()
+                   text:logEntry];
+```
+
+**数据查询** (列表 VC 层):
+
+```objc
+// CaptureListViewController.reloadData (基类方法, 所有标签共用)
+NSArray *items = [[DatabaseManager sharedManager]
+    queryAllRecordsFromTable:self.tableName limit:500];
+// 返回 NSArray<NSDictionary *>, 每个字典包含:
+//   bundleID → 应用 Bundle ID
+//   longText → 日志内容 (导出时写入文件的内容)
+//   timestamp → 时间戳
+
+self.filteredItems = items;  // 展示/过滤/选择用
+```
+
+**数据导出** (基类联动, 零修改):
+
+```objc
+// CaptureListViewController.performExport
+[UCExportManager exportItems:selected
+                   tableName:self.tableName   // "dynamic_hook" / "memory_scan" / "func_intercept"
+          fromViewController:self
+                  completion:^(BOOL success) { ... }];
+
+// UCExportManager 根据 tableName 自动:
+//   - 生成文件夹名: "dynamichook" / "memoryscan" / "funcintercept"
+//   - 生成 ZIP 名: "FLEX_dynamic_hook_N条.zip"
+//   - 每条 item[@"longText"] → 独立 .txt 文件
+```
+
+### 7.4 三个新功能的导出对照
+
+| 功能 | 列表 VC | tableName | ZIP 文件名示例 | .txt 内容来源 |
+|------|---------|-----------|---------------|-------------|
+| 动态Hook | `DynamicHookListVC` | `dynamic_hook` | `FLEX_dynamic_hook_15条.zip` | `longText` = Hook 日志 (类名/方法/参数/返回值) |
+| 内存扫描 | `MemoryScanListVC` | `memory_scan` | `FLEX_memory_scan_42条.zip` | `longText` = 扫描结果 (地址/映像/匹配数据/附近 hex) |
+| 函数拦截 | `FuncInterceptListVC` | `func_intercept` | `FLEX_func_intercept_30条.zip` | `longText` = 拦截日志 (类别/函数名/参数/调用栈) |
+
+### 7.5 必须做的配套修改
+
+为了让导出链路正常工作，以下两处需要将新增表名加入白名单：
+
+**修改点 1: DatabaseManager.m 的 `isAllowedTable:`**
+
+```objc
+- (BOOL)isAllowedTable:(NSString *)table {
+    static NSSet *allowedTables = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        allowedTables = [NSSet setWithArray:@[
+            @"zhaiyao", @"hanmiyao", @"jiamisuanfa", @"yunxingrizhi",
+            @"kaiguan", @"ssl_certificates", @"ssl_challenges",
+            @"ssl_psk", @"proxy_settings", @"rsa_data", @"decrypt_data",
+            @"url_responses", @"crypto_keys",
+            @"dynamic_hook",      // 新增
+            @"memory_scan",       // 新增
+            @"func_intercept"     // 新增
+        ]];
+    });
+    return [allowedTables containsObject:table];
+}
+```
+
+**修改点 2: DatabaseManager.m 的 `createTables`**
+
+```objc
+@"CREATE TABLE IF NOT EXISTS dynamic_hook (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
+@"CREATE TABLE IF NOT EXISTS memory_scan (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
+@"CREATE TABLE IF NOT EXISTS func_intercept (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
+```
+
+### 7.6 为什么不需要改 UCExportManager
+
+`UCExportManager.exportItems:` 的核心逻辑与具体表名解耦：
+
+```objc
++ (void)exportItems:(NSArray<NSDictionary *> *)items
+           tableName:(NSString *)tableName       // 任意表名
+  fromViewController:(UIViewController *)vc
+          completion:(void (^)(BOOL))completion {
+
+    dispatch_async(dispatch_get_global_queue(...), ^{
+        NSString *folderName = [tableName stringByReplacingOccurrencesOfString:@"_" withString:@""];
+        NSString *exportDir = [[self tempExportDir] stringByAppendingPathComponent:folderName];
+        // 创建目录、写入文件、打包 ZIP...
+        for (NSInteger i = 0; i < (NSInteger)items.count; i++) {
+            NSDictionary *item = items[i];
+            NSString *text = item[@"longText"] ?: @"";   // 唯一依赖: item 必须有 longText 字段
+            NSString *ts = item[@"timestamp"] ?: ...;
+            // 写入文件...
+        }
+        NSString *zipName = [NSString stringWithFormat:@"FLEX_%@_%lu条.zip", tableName, items.count];
+        // 打包、分享...
+    });
+}
+```
+
+只要 `queryAllRecordsFromTable:` 返回的字典包含 `longText` 和 `timestamp` 字段，导出就能正常工作。而所有数据表都使用统一的 `(bundleID, longText, timestamp)` schema，自动满足这个条件。
+
+### 7.7 导出按钮在 UI 中的位置
+
+```
+导航栏布局:
+┌─────────────────────────────────────────────────┐
+│ [完成]    [网络|解密|密钥|算法|Hook|扫描|拦截]    [🗑][⚙][⬆] │
+└─────────────────────────────────────────────────┘
+           ← 左侧按钮         标签栏(可滑动)        右侧按钮 →
+
+导出操作流程:
+1. 点击右上角 [⬆] 导出按钮
+2. 导航栏变为: [取消] [全选]    [导出(N)]
+3. 用户勾选条目, 点击 "导出(N)"
+4. 弹出 iOS 系统分享菜单
+5. 选择 "存储到'文件'" 即可保存到本地
+```
 
 ---
 
