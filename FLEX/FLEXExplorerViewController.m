@@ -108,9 +108,6 @@ typedef NS_ENUM(NSUInteger, FLEXExplorerMode) {
     [self setupToolbarActions];
     [self setupToolbarGestures];
     
-    // 设置版本号到工具栏左上角
-    self.explorerToolbar.versionString = [FLEXGlobalsViewController flexVersionString];
-    
     UITapGestureRecognizer *selectionTapGR = [[UITapGestureRecognizer alloc]
         initWithTarget:self action:@selector(handleSelectionTap:)
     ];

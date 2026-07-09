@@ -48,8 +48,6 @@
 @property (nonatomic, readwrite) FLEXExplorerToolbarItem *protectionItem;
 @property (nonatomic) UIView *secondRowBackground;
 
-@property (nonatomic, strong) UILabel *versionLabel;
-
 @end
 
 @implementation FLEXExplorerToolbar
@@ -73,15 +71,6 @@
         self.dragHandleImageView.tintColor = [FLEXColor.iconColor colorWithAlphaComponent:0.666];
         [self.dragHandle addSubview:self.dragHandleImageView];
         [self addSubview:self.dragHandle];
-        
-        // Version label - 左上角小字显示版本号
-        self.versionLabel = [[UILabel alloc] init];
-        self.versionLabel.font = [UIFont systemFontOfSize:9];
-        self.versionLabel.textColor = [FLEXColor.iconColor colorWithAlphaComponent:0.5];
-        self.versionLabel.textAlignment = NSTextAlignmentCenter;
-        self.versionLabel.adjustsFontSizeToFitWidth = YES;
-        self.versionLabel.minimumScaleFactor = 0.5;
-        [self.dragHandle addSubview:self.versionLabel];
         
         // Buttons - 第一行（最近和移动是独立的两个按钮）
         self.globalsItem   = [FLEXExplorerToolbarItem itemWithTitle:@"菜单" image:FLEXResources.globalsIcon];
@@ -160,9 +149,6 @@
     dragHandleImageFrame.origin.x = FLEXFloor((columnWidth - dragHandleImageFrame.size.width) / 2.0);
     dragHandleImageFrame.origin.y = FLEXFloor((kToolbarItemHeight - dragHandleImageFrame.size.height) / 2.0);
     self.dragHandleImageView.frame = dragHandleImageFrame;
-    
-    // Version label - 在 drag handle 底部居中显示
-    self.versionLabel.frame = CGRectMake(2, kToolbarItemHeight - 14, columnWidth - 4, 10);
     
     // 第一行按钮
     CGFloat originX = columnWidth;
@@ -301,13 +287,6 @@
         self.selectedViewDescriptionContainer.hidden = !showDescription;
     }
 }
-
-- (void)setVersionString:(NSString *)versionString {
-    _versionString = versionString;
-    self.versionLabel.text = versionString;
-    self.versionLabel.hidden = (versionString.length == 0);
-}
-
 
 #pragma mark - Sizing Convenience Methods
 
