@@ -22,7 +22,7 @@
 #import "UIBarButtonItem+FLEX.h"
 #import "FLEXResources.h"
 #import "NSUserDefaults+FLEX.h"
-#import "UCExportManager.h"
+#import "x/Decrypt/UCExportManager.h"
 
 #define kFirebaseAvailable NSClassFromString(@"FIRDocumentReference")
 #define kWebsocketsAvailable @available(iOS 13.0, *)
