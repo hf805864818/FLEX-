@@ -15,6 +15,8 @@
 #import "UCDecryptTool.h"
 #import "UCExportManager.h"
 
+@class CaptureListViewController;
+
 #pragma mark - Socket捕获列表接口声明
 
 @interface SocketCaptureListVC : CaptureListViewController
