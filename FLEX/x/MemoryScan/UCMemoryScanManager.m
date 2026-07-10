@@ -366,70 +366,71 @@ static void ScanDylibAtIndex(uint32_t index) {
     }
 }
 
-#pragma mark - 堆内存扫描
+#pragma mark - 堆内存扫描（通过 task_for_self + vm_read 扫描堆区域）
+
+#include <mach/task.h>
+#include <mach/mach_init.h>
 
 static void ScanHeapMemory(void) {
     @autoreleasepool {
         @try {
             recordScan(@"堆扫描", @"开始扫描堆内存...");
 
-            // 遍历所有 malloc zone 中的块
-            vm_address_t *zones = NULL;
-            unsigned int zoneCount = 0;
-            kern_return_t kr = malloc_get_all_zones(0, 0, &zones, &zoneCount);
-            if (kr != KERN_SUCCESS || !zones || zoneCount == 0) {
-                recordScan(@"堆扫描", @"无法获取 malloc zones");
-                return;
-            }
+            task_t task = mach_task_self();
+            struct vm_address_region basicInfo;
+            vm_size_t regionSize = 0;
+            natural_t nestingLevel = 0;
+            vm_address_t address = 0;
+            kern_return_t kr;
+            NSUInteger totalScanned = 0;
+            NSUInteger totalBlocks = 0;
 
-            __block NSUInteger totalScanned = 0;
-            __block NSUInteger totalBlocks = 0;
+            while (totalScanned < kMaxHeapScanBytes) {
+                kr = vm_region_recurse(task, &address, &regionSize, &nestingLevel,
+                                        (vm_region_recurse_info_t)&basicInfo);
+                if (kr != KERN_SUCCESS) break;
 
-            for (unsigned int z = 0; z < zoneCount; z++) {
-                if (totalScanned >= kMaxHeapScanBytes) break;
+                // 只扫描可读写且非可执行的区域（堆内存特征）
+                boolean_t isReadable = (basicInfo.protection & VM_PROT_READ) != 0;
+                boolean_t isWritable = (basicInfo.protection & VM_PROT_WRITE) != 0;
 
-                malloc_zone_t *zone = (malloc_zone_t *)zones[z];
-                if (!zone || !zone->introspect) continue;
-
-                // 使用 zone 的 enumerate 函数遍历所有块
-                @try {
-                    volatile unsigned int counter = 0;
-                    zone->introspect->enumerator(zone, (task_t)0, (void *)&counter,
-                        MALLOC_ENUMERATE_UNSIGNED, ^(uintptr_t addr, uintptr_t size) {
-                            @autoreleasepool {
-                                if (size < 16 || size > 65536) return;  // 跳过太小或太大的块
-                                if (totalScanned >= kMaxHeapScanBytes) return;
-
-                                const uint8_t *data = (const uint8_t *)addr;
-
-                                // 快速预检：跳过明显全 0 或全 FF 的块
-                                uint8_t first = data[0];
+                if (isReadable && isWritable && regionSize > 0 && regionSize <= kMaxHeapScanBytes) {
+                    uint8_t *buffer = (uint8_t *)malloc(regionSize);
+                    if (buffer) {
+                        vm_size_t bytesRead = 0;
+                        kr = vm_read_overwrite(task, address, regionSize, (vm_address_t)buffer, &bytesRead);
+                        if (kr == KERN_SUCCESS && bytesRead == regionSize) {
+                            // 快速预检：采样检查前64字节是否全0或全FF
+                            if (bytesRead >= 64) {
+                                uint8_t first = buffer[0];
                                 BOOL allSame = YES;
-                                NSUInteger checkLen = MIN((NSUInteger)size, (NSUInteger)64);
-                                for (NSUInteger i = 1; i < checkLen; i++) {
-                                    if (data[i] != first) { allSame = NO; break; }
+                                for (NSUInteger i = 1; i < 64; i++) {
+                                    if (buffer[i] != first) { allSame = NO; break; }
                                 }
-                                if (allSame) return;
+                                if (!allSame) {
+                                    ScanForKeyLengthPatterns(buffer, bytesRead, "堆内存");
 
-                                totalScanned += size;
-                                totalBlocks++;
+                                    if (bytesRead >= 64) {
+                                        ScanForBase64Keys(buffer, bytesRead, "堆内存");
+                                    }
 
-                                // 密钥长度高熵检测
-                                ScanForKeyLengthPatterns(data, size, "堆内存");
+                                    if (bytesRead >= 256) {
+                                        ScanForHighEntropyBlocks(buffer, bytesRead, "堆内存", 7.8, 256, 4096);
+                                    }
 
-                                // 如果块较大，扫 Base64
-                                if (size >= 64) {
-                                    ScanForBase64Keys(data, size, "堆内存");
+                                    totalScanned += bytesRead;
+                                    totalBlocks++;
                                 }
                             }
-                        });
-                } @catch (NSException *e) {
-                    // 某些 zone 的 enumerator 可能不兼容，跳过
+                        }
+                        free(buffer);
+                    }
                 }
+                address += regionSize;
             }
 
             recordScan(@"堆扫描", [NSString stringWithFormat:
-                @"完成，扫描了 %lu 个块，共 %lu 字节",
+                @"完成，扫描了 %lu 个区域，共 %lu 字节",
                 (unsigned long)totalBlocks, (unsigned long)totalScanned]);
         } @catch (NSException *e) {
             recordScan(@"堆扫描异常", [NSString stringWithFormat:@"%@", e.reason]);
