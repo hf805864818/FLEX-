@@ -380,7 +380,7 @@ static void ScanHeapMemory(void) {
             vm_address_t address = 0;
             vm_size_t regionSize = 0;
             natural_t nestingLevel = 0;
-            vm_region_submap_info_64 submapInfo;
+            struct vm_region_submap_info_64 submapInfo;
             mach_msg_type_number_t infoCount = VM_REGION_SUBMAP_INFO_COUNT_64;
             kern_return_t kr;
             NSUInteger totalScanned = 0;
