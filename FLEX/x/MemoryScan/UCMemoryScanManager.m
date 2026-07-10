@@ -62,13 +62,16 @@ static void recordScan(NSString *matchType, NSString *value) {
     self.scanCount++;
     NSLog(@"[MemoryScan] 第 %lu 次扫描...", (unsigned long)self.scanCount);
 
+    [self scanUserDefaults];
+    [self scanInfoPlist];
+
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSLog(@"[MemoryScan] 开始异步扫描...");
         [self scanRegisteredClasses];
         [self scanLoadedLibraries];   // ★ 新增：扫描动态库
         [self scanProcessMemory];     // ★ 新增：扫描进程内存
+        NSLog(@"[MemoryScan] 异步扫描完成");
     });
-    [self scanUserDefaults];
-    [self scanInfoPlist];
 
     if (self.scanCount >= 6) {
         [self stopScan];
@@ -197,7 +200,9 @@ static void recordScan(NSString *matchType, NSString *value) {
 - (void)scanLoadedLibraries {
     @autoreleasepool {
     @try {
+        recordScan(@"库扫描", @"开始扫描已加载动态库...");
         uint32_t imageCount = _dyld_image_count();
+        recordScan(@"库扫描", [NSString stringWithFormat:@"共 %u 个动态库", imageCount]);
         for (uint32_t i = 0; i < imageCount; i++) {
             @autoreleasepool {
                 const char *name = _dyld_get_image_name(i);
@@ -268,6 +273,7 @@ static void recordScan(NSString *matchType, NSString *value) {
 - (void)scanProcessMemory {
     @autoreleasepool {
     @try {
+        recordScan(@"进程扫描", @"开始扫描 __data 段...");
         uint32_t imageCount = _dyld_image_count();
         for (uint32_t i = 0; i < imageCount; i++) {
             @autoreleasepool {
