@@ -377,22 +377,24 @@ static void ScanHeapMemory(void) {
             recordScan(@"堆扫描", @"开始扫描堆内存...");
 
             task_t task = mach_task_self();
-            struct vm_address_region basicInfo;
+            vm_address_t address = 0;
             vm_size_t regionSize = 0;
             natural_t nestingLevel = 0;
-            vm_address_t address = 0;
+            vm_region_submap_info_64 submapInfo;
+            mach_msg_type_number_t infoCount = VM_REGION_SUBMAP_INFO_COUNT_64;
             kern_return_t kr;
             NSUInteger totalScanned = 0;
             NSUInteger totalBlocks = 0;
 
             while (totalScanned < kMaxHeapScanBytes) {
-                kr = vm_region_recurse(task, &address, &regionSize, &nestingLevel,
-                                        (vm_region_recurse_info_t)&basicInfo);
+                kr = vm_region_recurse_64(task, &address, &regionSize, &nestingLevel,
+                                          (vm_region_recurse_info_t)&submapInfo, &infoCount);
                 if (kr != KERN_SUCCESS) break;
 
-                // 只扫描可读写且非可执行的区域（堆内存特征）
-                boolean_t isReadable = (basicInfo.protection & VM_PROT_READ) != 0;
-                boolean_t isWritable = (basicInfo.protection & VM_PROT_WRITE) != 0;
+                // 只扫描可读写区域（堆内存特征）
+                boolean_t isReadable = (submapInfo.is_submap == 0) &&
+                    (submapInfo.protection & VM_PROT_READ) != 0;
+                boolean_t isWritable = (submapInfo.protection & VM_PROT_WRITE) != 0;
 
                 if (isReadable && isWritable && regionSize > 0 && regionSize <= kMaxHeapScanBytes) {
                     uint8_t *buffer = (uint8_t *)malloc(regionSize);
