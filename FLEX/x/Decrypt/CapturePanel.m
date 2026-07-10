@@ -410,13 +410,17 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             [db clearTable:@"decrypt_data"];
             [db clearTable:@"crypto_keys"];
             [db clearTable:@"jiamisuanfa"];
+            [db clearTable:@"hanmiyao"];
             [db clearTable:@"url_responses"];
             [db clearTable:@"ssl_certificates"];
             [db clearTable:@"ssl_challenges"];
+            [db clearTable:@"ssl_psk"];
+            [db clearTable:@"proxy_settings"];
             [db clearTable:@"rsa_data"];
             [db clearTable:@"dynamic_hook"];
             [db clearTable:@"memory_scan"];
             [db clearTable:@"func_intercept"];
+            [db clearTable:@"yunxingrizhi"];
             
             [self.tableView reloadData];
             
@@ -1314,6 +1318,21 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
                     postNotificationName:CaptureDataUpdatedNotification
                     object:nil
                     userInfo:@{CaptureDataUpdatedTableKey: @"func_intercept"}];
+            };
+            break;
+        }
+        case CaptureTabSocket: {
+            title = @"清除Socket记录";
+            msg = @"确定清除所有Socket抓取记录？";
+            action = ^{
+                [[DatabaseManager sharedManager] clearTable:@"url_responses"];
+                SocketCaptureListVC *vc = self.viewControllers[CaptureTabSocket];
+                [vc reloadData];
+                
+                [[NSNotificationCenter defaultCenter]
+                    postNotificationName:CaptureDataUpdatedNotification
+                    object:nil
+                    userInfo:@{CaptureDataUpdatedTableKey: @"url_responses"}];
             };
             break;
         }
