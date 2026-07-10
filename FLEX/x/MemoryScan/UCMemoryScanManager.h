@@ -6,6 +6,8 @@
 
 - (void)startScan;
 - (void)stopScan;
-- (void)scanLoadedLibraries;  // ★ 新增：扫描加载的动态库内存
+- (void)scanAllDylibs;
+- (void)scanLoadedLibraries;  // 兼容旧入口
+- (void)scanProcessMemory;    // 兼容旧入口
 
 @end
