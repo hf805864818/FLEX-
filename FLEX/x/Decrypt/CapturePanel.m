@@ -15,6 +15,8 @@
 #import "UCDecryptTool.h"
 #import "UCExportManager.h"
 
+@class SocketCaptureListVC;  // ★ 前置声明
+
 #pragma mark - 通知名称定义
 
 NSString *const CaptureDataUpdatedNotification = @"CaptureDataUpdatedNotification";
