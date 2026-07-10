@@ -15,13 +15,6 @@
 #import "UCDecryptTool.h"
 #import "UCExportManager.h"
 
-@class CaptureListViewController;
-
-#pragma mark - Socket捕获列表接口声明
-
-@interface SocketCaptureListVC : CaptureListViewController
-@end
-
 #pragma mark - 通知名称定义
 
 NSString *const CaptureDataUpdatedNotification = @"CaptureDataUpdatedNotification";
@@ -820,6 +813,11 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     }];
 }
 
+@end
+
+#pragma mark - Socket捕获列表
+
+@interface SocketCaptureListVC : CaptureListViewController
 @end
 
 #pragma mark - 解密列表
