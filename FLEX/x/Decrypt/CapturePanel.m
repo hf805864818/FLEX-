@@ -30,6 +30,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     CaptureTabDynamicHook,
     CaptureTabMemoryScan,
     CaptureTabFuncIntercept,
+    CaptureTabSocket,       // ★ 新增：Socket捕获数据
 };
 
 #pragma mark - 功能开关项
@@ -1042,8 +1043,9 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     DynamicHookListVC *hookVC = [[DynamicHookListVC alloc] init];
     MemoryScanListVC *memVC = [[MemoryScanListVC alloc] init];
     FuncInterceptListVC *interceptVC = [[FuncInterceptListVC alloc] init];
+    SocketCaptureListVC *socketVC = [[SocketCaptureListVC alloc] init];   // ★ 新增
 
-    _viewControllers = @[networkVC, decryptVC, keyVC, cryptoVC, hookVC, memVC, interceptVC];
+    _viewControllers = @[networkVC, decryptVC, keyVC, cryptoVC, hookVC, memVC, interceptVC, socketVC];
     _currentIndex = 0;
 
     _pageVC = [[UIPageViewController alloc]
@@ -1360,7 +1362,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 }
 
 - (void)setupScrollableTabBar {
-    NSArray *titles = @[@"网络", @"解密", @"密钥", @"算法", @"动态Hook", @"内存扫描", @"函数拦截"];
+    NSArray *titles = @[@"网络", @"解密", @"密钥", @"算法", @"动态Hook", @"内存扫描", @"函数拦截", @"Socket"];
     CGFloat tabH = 30.0;
     UIColor *normalColor = FLEXColor.deemphasizedTextColor;
     UIColor *selectedColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0];
@@ -1495,6 +1497,37 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 - (void)closeAction {
     [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+@end
+
+#pragma mark - Socket捕获列表
+
+@interface SocketCaptureListVC : CaptureListViewController
+@end
+
+@implementation SocketCaptureListVC
+
+- (instancetype)init {
+    return [self initWithTableName:@"url_responses"
+                       scopeTitles:@[@"全部", @"SEND", @"RECV", @"WRITE", @"em1oifd0"]
+                         tintColor:[UIColor colorWithRed:1.0 green:0.5 blue:0.0 alpha:1.0]];
+}
+
+- (BOOL)matchesScope:(NSInteger)scope text:(NSString *)text {
+    NSString *low = text.lowercaseString;
+    switch (scope) {
+        case 1: return [low containsString:@"SEND"] || [low containsString:@"SENDTO"] || [low containsString:@"SENDMSG"];
+        case 2: return [low containsString:@"RECV"];
+        case 3: return [low containsString:@"WRITE"];
+        case 4: return [low containsString:@"em1oifd0"] || [low containsString:@"user-key"] || [low containsString:@"sign"];
+        default: return YES;
+    }
+}
+
+- (UIViewController *)detailViewControllerForItem:(NSDictionary *)item {
+    NSString *text = item[@"longText"] ?: @"";
+    return [[CaptureDetailViewController alloc] initWithText:text title:@"Socket数据"];
 }
 
 @end
