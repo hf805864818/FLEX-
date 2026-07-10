@@ -268,8 +268,9 @@ static void ScanForBase64Keys(const uint8_t *data, NSUInteger dataLength,
                     if (entropy >= 7.0 && decoded.length >= 16) {
                         NSMutableString *hexPreview = [NSMutableString string];
                         NSUInteger previewLen = MIN(decoded.length, (NSUInteger)32);
+                        const uint8_t *decodedBytes = (const uint8_t *)decoded.bytes;
                         for (NSUInteger i = 0; i < previewLen; i++) {
-                            [hexPreview appendFormat:@"%02x", decoded.bytes[i]];
+                            [hexPreview appendFormat:@"%02x", decodedBytes[i]];
                         }
 
                         recordScan(@"Base64密钥",
@@ -377,12 +378,12 @@ static void ScanHeapMemory(void) {
             unsigned int zoneCount = 0;
             kern_return_t kr = malloc_get_all_zones(0, 0, &zones, &zoneCount);
             if (kr != KERN_SUCCESS || !zones || zoneCount == 0) {
-                recordScan(@"堆扫描", @"无法获取 malloc zones"];
+                recordScan(@"堆扫描", @"无法获取 malloc zones");
                 return;
             }
 
-            NSUInteger totalScanned = 0;
-            NSUInteger totalBlocks = 0;
+            __block NSUInteger totalScanned = 0;
+            __block NSUInteger totalBlocks = 0;
 
             for (unsigned int z = 0; z < zoneCount; z++) {
                 if (totalScanned >= kMaxHeapScanBytes) break;
@@ -392,8 +393,9 @@ static void ScanHeapMemory(void) {
 
                 // 使用 zone 的 enumerate 函数遍历所有块
                 @try {
-                    zone->introspect->enumerator(zone, &totalScanned, kMaxHeapScanBytes,
-                        ^(malloc_zone_t *z, uintptr_t addr, uintptr_t size) {
+                    volatile unsigned int counter = 0;
+                    zone->introspect->enumerator(zone, (task_t)0, (void *)&counter,
+                        MALLOC_ENUMERATE_UNSIGNED, ^(uintptr_t addr, uintptr_t size) {
                             @autoreleasepool {
                                 if (size < 16 || size > 65536) return;  // 跳过太小或太大的块
                                 if (totalScanned >= kMaxHeapScanBytes) return;
