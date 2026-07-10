@@ -677,6 +677,27 @@ static FIRDocumentReference * _logos_method$_ungrouped$FIRCollectionReference$ad
                 // 不会触发竞争来完成解析器。
                 [slf.currentRequest HTTPBody];
 
+                // 主动缓存 request body stream，防止后续读取时 stream 已被消费
+                NSData *existingBody = [slf.currentRequest HTTPBody];
+                if (!existingBody) {
+                    NSInputStream *bodyStream = [slf.currentRequest HTTPBodyStream];
+                    if (bodyStream && [bodyStream conformsToProtocol:@protocol(NSCopying)]) {
+                        NSInputStream *streamCopy = [bodyStream copy];
+                        uint8_t buffer[1024];
+                        NSMutableData *accum = [NSMutableData data];
+                        [streamCopy open];
+                        NSInteger bytesRead;
+                        while ((bytesRead = [streamCopy read:buffer maxLength:1024]) > 0) {
+                            [accum appendBytes:buffer length:bytesRead];
+                        }
+                        [streamCopy close];
+                        if (accum.length > 0) {
+                            objc_setAssociatedObject(slf, "kFLEXCapturedRequestBody",
+                                                     accum, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                        }
+                    }
+                }
+
                 [FLEXNetworkObserver.sharedObserver URLSessionTaskWillResume:slf];
             }
         }

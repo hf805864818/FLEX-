@@ -181,6 +181,12 @@
 
 - (NSData *)cachedRequestBody {
     if (!_cachedRequestBody) {
+        // 优先使用 observer 在 resume 时预缓存的 body
+        NSData *preCaptured = objc_getAssociatedObject(self.request, "kFLEXCapturedRequestBody");
+        if (preCaptured) {
+            _cachedRequestBody = preCaptured;
+            return _cachedRequestBody;
+        }
         if (self.request.HTTPBody != nil) {
             _cachedRequestBody = self.request.HTTPBody;
         } else if ([self.request.HTTPBodyStream conformsToProtocol:@protocol(NSCopying)]) {

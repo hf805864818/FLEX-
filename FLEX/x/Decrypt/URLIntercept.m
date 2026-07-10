@@ -564,10 +564,33 @@ static void RecordTaskRequest(NSURLSessionTask *task) {
 
     NSInputStream *bodyStream = request.HTTPBodyStream;
     if (bodyStream && !body) {
-        [detail appendFormat:@"\n\n请求 Body Stream: (有流式 body, 无法直接读取)"];
+        if ([bodyStream conformsToProtocol:@protocol(NSCopying)]) {
+            NSInputStream *streamCopy = [bodyStream copy];
+            uint8_t buffer[1024];
+            NSMutableData *accum = [NSMutableData data];
+            [streamCopy open];
+            NSInteger bytesRead;
+            while ((bytesRead = [streamCopy read:buffer maxLength:1024]) > 0) {
+                [accum appendBytes:buffer length:bytesRead];
+            }
+            [streamCopy close];
+            if (accum.length > 0) {
+                [detail appendFormat:@"\n\n请求 Body (Stream):\n%@", FormatBody(accum)];
+            } else {
+                [detail appendFormat:@"\n\n请求 Body Stream: (流读取结果为空)"];
+            }
+        } else {
+            [detail appendFormat:@"\n\n请求 Body Stream: (不支持 NSCopying，无法安全读取)"];
+        }
     }
 
     SaveInterceptRecord(title, detail);
+
+    // 标记此请求已被 URLIntercept 记录，防止 URLCapture 重复记录
+    NSMutableURLRequest *mutableReq = [request mutableCopy];
+    [NSURLProtocol setProperty:@YES forKey:@"IZXURLInterceptRecorded" inRequest:mutableReq];
+    objc_setAssociatedObject(task, "kIZXInterceptMarkedRequest", mutableReq,
+                             OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
     @try {
         id session = [task valueForKey:@"session"];
@@ -714,6 +737,12 @@ static void HookSessionAsyncMethods(Class sessionClass) {
                         (long)status, response.MIMEType ?: @"(unknown)",
                         (unsigned long)data.length,
                         error ? [NSString stringWithFormat:@"\n错误: %@", error] : @""];
+                    if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+                        NSHTTPURLResponse *httpResp = (NSHTTPURLResponse *)response;
+                        if (httpResp.allHeaderFields.count > 0) {
+                            detail = [NSString stringWithFormat:@"%@\n\n响应头:\n%@", detail, httpResp.allHeaderFields];
+                        }
+                    }
                     detail = [NSString stringWithFormat:@"%@\n\nBody:\n%@", detail, FormatResponseBody(data, response)];
                     SaveInterceptRecord(title, detail);
                 }
@@ -739,6 +768,12 @@ static void HookSessionAsyncMethods(Class sessionClass) {
                         URL.absoluteString ?: @"(null)", (long)status,
                         response.MIMEType ?: @"(unknown)", (unsigned long)data.length,
                         error ? [NSString stringWithFormat:@"\n错误: %@", error] : @""];
+                    if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+                        NSHTTPURLResponse *httpResp = (NSHTTPURLResponse *)response;
+                        if (httpResp.allHeaderFields.count > 0) {
+                            detail = [NSString stringWithFormat:@"%@\n\n响应头:\n%@", detail, httpResp.allHeaderFields];
+                        }
+                    }
                     detail = [NSString stringWithFormat:@"%@\n\nBody:\n%@", detail, FormatResponseBody(data, response)];
                     SaveInterceptRecord(title, detail);
                 }

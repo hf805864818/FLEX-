@@ -100,6 +100,7 @@ static char kDefaultConfigOriginalKey;
 static char kEphemeralConfigOriginalKey;
 
 static NSString * const kIZXURLProtocolHandledKey = @"IZXURLProtocolHandled";
+static NSString * const kIZXURLInterceptRecordedKey = @"IZXURLInterceptRecorded";
 
 static dispatch_queue_t gResponseQueue;
 static NSMutableDictionary<NSValue *, NSMutableDictionary *> *gTaskStates;
@@ -248,6 +249,8 @@ static void SaveURLResponse(NSURLRequest *request,
                             NSString *source) {
     if (!URLCaptureEnabled()) return;
     if (IZXRequestWasHandledByProtocol(request) && ![source hasPrefix:@"protocol"]) return;
+    // 跳过已被 URLIntercept 记录的请求，避免重复
+    if ([NSURLProtocol propertyForKey:kIZXURLInterceptRecordedKey inRequest:request]) return;
 
     NSURL *URL = response.URL ?: request.URL;
     if (!URL) return;
@@ -270,6 +273,31 @@ static void SaveURLResponse(NSURLRequest *request,
     NSString *MIMEType = response.MIMEType;
     NSString *URLString = URL.absoluteString;
     NSString *HTTPMethod = request.HTTPMethod;
+
+    NSDictionary *requestHeaders = request.allHTTPHeaderFields ?: @{};
+
+    // 提取 Request Body（在 dispatch_async 之前同步读取，防止 stream 被消费）
+    NSData *requestBody = request.HTTPBody;
+    NSString *requestBodyString = nil;
+    if (requestBody && requestBody.length > 0) {
+        requestBodyString = PrettyBodyDescription(requestBody);
+    } else {
+        NSInputStream *bodyStream = request.HTTPBodyStream;
+        if (bodyStream && [bodyStream conformsToProtocol:@protocol(NSCopying)]) {
+            NSInputStream *streamCopy = [bodyStream copy];
+            uint8_t buffer[1024];
+            NSMutableData *accum = [NSMutableData data];
+            [streamCopy open];
+            NSInteger bytesRead;
+            while ((bytesRead = [streamCopy read:buffer maxLength:1024]) > 0) {
+                [accum appendBytes:buffer length:bytesRead];
+            }
+            [streamCopy close];
+            if (accum.length > 0) {
+                requestBodyString = PrettyBodyDescription(accum);
+            }
+        }
+    }
 
     dispatch_async(gResponseQueue, ^{
         @autoreleasepool {
@@ -306,13 +334,21 @@ static void SaveURLResponse(NSURLRequest *request,
                 }
             }
             NSString *errorLine = error ? [NSString stringWithFormat:@"\nError: %@", error] : @"";
+            NSString *requestHeadersLine = requestHeaders.count > 0 ?
+                [NSString stringWithFormat:@"\nRequest Headers: %@\n", requestHeaders] : @"\n";
+            NSString *requestBodyLine = requestBodyString ?
+                [NSString stringWithFormat:@"\nRequest Body:\n%@\n", requestBodyString] : @"\n";
             NSString *info = [NSString stringWithFormat:
-                              @"[URL Response · %@]\n%@ %@\nStatus: %ld\nMIME: %@\nHeaders: %@\n"
-                               "Length: %lu%@%@\n\nBody:\n%@",
+                              @"[URL Response · %@]\n%@ %@\nStatus: %ld\nMIME: %@\nHeaders: %@"
+                               "%@Length: %lu%@%@\n\nResponse Body:\n%@",
                               source ?: @"NSURLSession", HTTPMethod ?: @"GET", URLString,
                               (long)statusCode, MIMEType ?: @"(unknown)", headers,
+                              requestHeadersLine,
                               (unsigned long)originalLength, truncated ? @"（仅保存前 1 MB）" : @"",
                               errorLine, bodyDescription];
+            if (requestBodyLine.length > 0) {
+                info = [info stringByAppendingString:requestBodyLine];
+            }
 
             NSString *bundleID = CurrentBundleID();
             DatabaseManager *db = [DatabaseManager sharedManager];

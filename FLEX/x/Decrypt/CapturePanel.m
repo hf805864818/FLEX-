@@ -592,7 +592,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         NSArray *items = [[DatabaseManager sharedManager]
-            queryAllRecordsFromTable:tableName limit:500];
+            queryAllRecordsFromTable:tableName limit:1000];
         
         dispatch_async(dispatch_get_main_queue(), ^{
             self.allItems = items;
