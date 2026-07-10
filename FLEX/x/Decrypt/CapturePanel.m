@@ -15,7 +15,10 @@
 #import "UCDecryptTool.h"
 #import "UCExportManager.h"
 
-@class SocketCaptureListVC;  // ★ 前置声明
+#pragma mark - Socket捕获列表接口声明
+
+@interface SocketCaptureListVC : CaptureListViewController
+@end
 
 #pragma mark - 通知名称定义
 
@@ -1503,10 +1506,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 @end
 
-#pragma mark - Socket捕获列表
-
-@interface SocketCaptureListVC : CaptureListViewController
-@end
+#pragma mark - Socket捕获列表实现
 
 @implementation SocketCaptureListVC
 
