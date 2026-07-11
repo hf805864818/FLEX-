@@ -14,6 +14,7 @@
 #import "DatabaseManager.h"
 #import "UCDecryptTool.h"
 #import "UCExportManager.h"
+#import "../PointCastleHook/UCPointCastleHookManager.h"
 
 #pragma mark - 通知名称定义
 
@@ -459,7 +460,12 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     [[DatabaseManager sharedManager] setSwitch:item.switchKey
                                       bundleID:bundleID
                                          value:sender.isOn];
-    
+
+    // PointCastle Hook 打开时即时安装 socket hooks（installHooks 内部 dispatch_once，重复调用安全）
+    if ([item.switchKey isEqualToString:@"pointycastle_hook_enabled"] && sender.isOn) {
+        [[UCPointCastleHookManager sharedManager] installHooks];
+    }
+
     NSLog(@"[CaptureSettings] %@ 开关: %@", item.title, sender.isOn ? @"开启" : @"关闭");
 }
 

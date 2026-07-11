@@ -8,6 +8,7 @@
 // 单次扫描上限：防止 OOM 或拖垮主线程
 static const NSUInteger kDefaultMaxScanBytes = 80 * 1024 * 1024;  // 80 MB
 static const NSUInteger kMinRegionSize = 1024;                      // 小于 1KB 的区域忽略
+static const vm_size_t kScanChunkSize = 256 * 1024;                 // 分块 256KB 安全读取
 
 @interface UCDartMemoryScanner ()
 @property (nonatomic, strong) dispatch_queue_t scanQueue;
@@ -51,36 +52,43 @@ static const NSUInteger kMinRegionSize = 1024;                      // 小于 1K
 
     NSMutableSet<NSData *> *unique = [NSMutableSet set];
     NSMutableArray<NSData *> *candidates = [NSMutableArray array];
+    __block NSUInteger remainingBudget = kDefaultMaxScanBytes;
 
-    [self enumerateReadableWritableRegionsUsingBlock:^(const void *base, size_t size, BOOL *stop) {
-        if (size < kMinRegionSize) return;
-        if (size > kDefaultMaxScanBytes) size = kDefaultMaxScanBytes;
+    [self enumerateReadableWritableRegionsUsingBlock:^(vm_address_t address, vm_size_t regionSize, BOOL *stop) {
+        if (regionSize < kMinRegionSize) return;
+        if (remainingBudget == 0) { *stop = YES; return; }
 
-        const uint8_t *bytes = (const uint8_t *)base;
-        NSUInteger keyLengths[] = {16, 24, 32};
+        vm_size_t scanSize = MIN(regionSize, (vm_size_t)remainingBudget);
 
-        for (NSUInteger ki = 0; ki < 3; ki++) {
-            NSUInteger keyLen = keyLengths[ki];
-            if (size < keyLen) continue;
+        // 分块安全读取，避免直接访问可能失效的映射
+        vm_size_t offset = 0;
+        while (offset < scanSize && candidates.count < maxCandidates) {
+            vm_size_t chunkSize = MIN(kScanChunkSize, scanSize - offset);
+            if (chunkSize == 0) break;
 
-            for (NSUInteger offset = 0; offset <= size - keyLen; offset++) {
-                // 步长优化：AES 密钥通常按 16 字节对齐或紧跟在 Dart 对象头后
-                // 但为了不错过，只在发现候选时按字节滑动；未通过熵/可打印测试时跳 4 字节
-                if ((offset % 4) != 0) continue;
+            uint8_t *buffer = (uint8_t *)malloc(chunkSize);
+            if (!buffer) break;
 
-                NSData *candidate = [NSData dataWithBytes:bytes + offset length:keyLen];
-                if ([unique containsObject:candidate]) continue;
-
-                if (![self isPromisingCandidate:candidate]) continue;
-
-                [unique addObject:candidate];
-                [candidates addObject:candidate];
-
-                if (candidates.count >= maxCandidates) {
-                    *stop = YES;
-                    return;
-                }
+            vm_size_t bytesRead = 0;
+            kern_return_t kr = vm_read_overwrite(mach_task_self(),
+                                                   address + offset,
+                                                   chunkSize,
+                                                   (vm_address_t)buffer,
+                                                   &bytesRead);
+            if (kr == KERN_SUCCESS && bytesRead == chunkSize) {
+                [self scanBuffer:buffer
+                          length:(NSUInteger)bytesRead
+                   maxCandidates:maxCandidates
+                          unique:unique
+                      candidates:candidates
+                            stop:stop];
+                remainingBudget -= bytesRead;
             }
+
+            free(buffer);
+            offset += chunkSize;
+
+            if (*stop) break;
         }
     }];
 
@@ -89,41 +97,77 @@ static const NSUInteger kMinRegionSize = 1024;                      // 小于 1K
 
 #pragma mark - 内存区域枚举
 
-- (void)enumerateReadableWritableRegionsUsingBlock:(void (^)(const void *base, size_t size, BOOL *stop))block {
+- (void)enumerateReadableWritableRegionsUsingBlock:(void (^)(vm_address_t address, vm_size_t size, BOOL *stop))block {
     if (!block) return;
 
     task_t task = mach_task_self();
     vm_address_t address = 0;
     vm_size_t size = 0;
+    natural_t nestingLevel = 0;
+    struct vm_region_submap_info_64 submapInfo;
+    mach_msg_type_number_t infoCount = VM_REGION_SUBMAP_INFO_COUNT_64;
     kern_return_t kr = KERN_SUCCESS;
 
     while (kr == KERN_SUCCESS) {
-        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-        vm_region_basic_info_data_64_t info;
-        memory_object_name_t objectName = MACH_PORT_NULL;
-
-        kr = vm_region_64(task,
-                          &address,
-                          &size,
-                          VM_REGION_BASIC_INFO_64,
-                          (vm_region_info_t)&info,
-                          &count,
-                          &objectName);
+        kr = vm_region_recurse_64(task, &address, &size, &nestingLevel,
+                                  (vm_region_recurse_info_t)&submapInfo, &infoCount);
         if (kr != KERN_SUCCESS) break;
 
-        // 只扫描可读可写（RW）区域；排除只读 text 段
-        BOOL isReadable = (info.protection & VM_PROT_READ) != 0;
-        BOOL isWritable = (info.protection & VM_PROT_WRITE) != 0;
-        // Dart 堆通常为 VM_PROT_READ | VM_PROT_WRITE，且不是共享的
-        BOOL isShared = (info.shared != 0);
+        if (submapInfo.is_submap) {
+            nestingLevel++;
+            continue;
+        }
+        if (nestingLevel > 0) nestingLevel--;
 
-        if (isReadable && isWritable && !isShared && size >= kMinRegionSize) {
+        // 只扫描可读可写（RW）区域；排除共享映射
+        BOOL isReadable = (submapInfo.protection & VM_PROT_READ) != 0;
+        BOOL isWritable = (submapInfo.protection & VM_PROT_WRITE) != 0;
+        BOOL maxReadable = (submapInfo.max_protection & VM_PROT_READ) != 0;
+        BOOL maxWritable = (submapInfo.max_protection & VM_PROT_WRITE) != 0;
+
+        if (isReadable && isWritable && maxReadable && maxWritable && size >= kMinRegionSize) {
             BOOL stop = NO;
-            block((const void *)address, (size_t)size, &stop);
+            block(address, size, &stop);
             if (stop) break;
         }
 
         address += size;
+    }
+}
+
+#pragma mark - 扫描缓冲区
+
+- (void)scanBuffer:(const uint8_t *)buffer
+            length:(NSUInteger)length
+     maxCandidates:(NSUInteger)maxCandidates
+            unique:(NSMutableSet<NSData *> *)unique
+        candidates:(NSMutableArray<NSData *> *)candidates
+              stop:(BOOL *)stop {
+    if (!buffer || length < 16) return;
+
+    NSUInteger keyLengths[] = {16, 24, 32};
+
+    for (NSUInteger ki = 0; ki < 3; ki++) {
+        NSUInteger keyLen = keyLengths[ki];
+        if (length < keyLen) continue;
+
+        for (NSUInteger offset = 0; offset <= length - keyLen; offset++) {
+            // 步长优化：未通过测试时按 4 字节跳跃
+            if ((offset % 4) != 0) continue;
+
+            NSData *candidate = [NSData dataWithBytes:buffer + offset length:keyLen];
+            if ([unique containsObject:candidate]) continue;
+
+            if (![self isPromisingCandidate:candidate]) continue;
+
+            [unique addObject:candidate];
+            [candidates addObject:candidate];
+
+            if (candidates.count >= maxCandidates) {
+                *stop = YES;
+                return;
+            }
+        }
     }
 }
 

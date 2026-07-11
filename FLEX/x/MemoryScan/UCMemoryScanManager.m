@@ -371,6 +371,33 @@ static void ScanDylibAtIndex(uint32_t index) {
 #include <mach/task.h>
 #include <mach/mach_init.h>
 
+static const vm_size_t kHeapScanChunkSize = 256 * 1024;  // 分块 256KB，避免大区域读取触发 SIGBUS
+
+static void ScanHeapBuffer(uint8_t *buffer, vm_size_t bytesRead,
+                           NSUInteger *totalScanned, NSUInteger *totalBlocks);
+
+static BOOL IsInterestingRegion(uint32_t user_tag, vm_prot_t protection, vm_prot_t max_protection) {
+    // 只扫描有读写权限且当前可读的区域
+    if ((protection & VM_PROT_READ) == 0) return NO;
+    if ((protection & VM_PROT_WRITE) == 0) return NO;
+    if ((max_protection & VM_PROT_READ) == 0) return NO;
+
+    // 跳过明确的只读/共享映射（如 dyld shared cache、文件映射）
+    if ((protection & VM_PROT_WRITE) == 0 && (max_protection & VM_PROT_WRITE) == 0) return NO;
+
+    // 跳过某些已知非堆区域 tag
+    switch (user_tag) {
+        case VM_MEMORY_IOKIT:       // IOKit 映射
+        case VM_MEMORY_STACK:       // 线程栈
+        case VM_MEMORY_GUARD:       // guard page
+        case VM_MEMORY_SHARED_PMAP: // shared pmap
+            return NO;
+        default:
+            break;
+    }
+    return YES;
+}
+
 static void ScanHeapMemory(void) {
     @autoreleasepool {
         @try {
@@ -391,43 +418,71 @@ static void ScanHeapMemory(void) {
                                           (vm_region_recurse_info_t)&submapInfo, &infoCount);
                 if (kr != KERN_SUCCESS) break;
 
-                // 只扫描可读写区域（堆内存特征）
-                boolean_t isReadable = (submapInfo.is_submap == 0) &&
-                    (submapInfo.protection & VM_PROT_READ) != 0;
-                boolean_t isWritable = (submapInfo.protection & VM_PROT_WRITE) != 0;
+                if (submapInfo.is_submap) {
+                    nestingLevel++;
+                    continue;
+                }
 
-                if (isReadable && isWritable && regionSize > 0 && regionSize <= kMaxHeapScanBytes) {
-                    uint8_t *buffer = (uint8_t *)malloc(regionSize);
-                    if (buffer) {
+                // 进入子图后若到底，退回一级继续下一个兄弟区域
+                if (nestingLevel > 0) {
+                    nestingLevel--;
+                }
+
+                if (!IsInterestingRegion(submapInfo.user_tag, submapInfo.protection, submapInfo.max_protection)) {
+                    address += regionSize;
+                    continue;
+                }
+
+                if (regionSize == 0 || regionSize > kMaxHeapScanBytes) {
+                    address += regionSize;
+                    continue;
+                }
+
+                // 限制本区域扫描大小
+                vm_size_t scanSize = MIN(regionSize, (vm_size_t)(kMaxHeapScanBytes - totalScanned));
+                vm_size_t chunkCount = (scanSize + kHeapScanChunkSize - 1) / kHeapScanChunkSize;
+                BOOL regionReadable = YES;
+
+                // 先尝试读取第一块，验证区域是否可读
+                uint8_t *probeBuffer = (uint8_t *)malloc(kHeapScanChunkSize);
+                if (!probeBuffer) {
+                    address += regionSize;
+                    continue;
+                }
+                vm_size_t probeRead = 0;
+                vm_size_t firstChunk = MIN(kHeapScanChunkSize, scanSize);
+                kr = vm_read_overwrite(task, address, firstChunk, (vm_address_t)probeBuffer, &probeRead);
+                if (kr != KERN_SUCCESS || probeRead != firstChunk) {
+                    regionReadable = NO;
+                }
+
+                if (regionReadable) {
+                    // 第一块可读，扫描它
+                    ScanHeapBuffer(probeBuffer, firstChunk, &totalScanned, &totalBlocks);
+
+                    // 继续扫描剩余块
+                    for (vm_size_t i = 1; i < chunkCount && totalScanned < kMaxHeapScanBytes; i++) {
+                        vm_address_t chunkAddr = address + i * kHeapScanChunkSize;
+                        vm_size_t chunkSize = MIN(kHeapScanChunkSize, scanSize - i * kHeapScanChunkSize);
+                        if (chunkSize == 0) break;
+
+                        uint8_t *chunkBuffer = (uint8_t *)malloc(chunkSize);
+                        if (!chunkBuffer) break;
+
                         vm_size_t bytesRead = 0;
-                        kr = vm_read_overwrite(task, address, regionSize, (vm_address_t)buffer, &bytesRead);
-                        if (kr == KERN_SUCCESS && bytesRead == regionSize) {
-                            // 快速预检：采样检查前64字节是否全0或全FF
-                            if (bytesRead >= 64) {
-                                uint8_t first = buffer[0];
-                                BOOL allSame = YES;
-                                for (NSUInteger i = 1; i < 64; i++) {
-                                    if (buffer[i] != first) { allSame = NO; break; }
-                                }
-                                if (!allSame) {
-                                    ScanForKeyLengthPatterns(buffer, bytesRead, "堆内存");
-
-                                    if (bytesRead >= 64) {
-                                        ScanForBase64Keys(buffer, bytesRead, "堆内存");
-                                    }
-
-                                    if (bytesRead >= 256) {
-                                        ScanForHighEntropyBlocks(buffer, bytesRead, "堆内存", 7.8, 256, 4096);
-                                    }
-
-                                    totalScanned += bytesRead;
-                                    totalBlocks++;
-                                }
-                            }
+                        kr = vm_read_overwrite(task, chunkAddr, chunkSize, (vm_address_t)chunkBuffer, &bytesRead);
+                        if (kr == KERN_SUCCESS && bytesRead == chunkSize) {
+                            ScanHeapBuffer(chunkBuffer, chunkSize, &totalScanned, &totalBlocks);
+                        } else {
+                            // 任一块读取失败就放弃该区域后续部分
+                            free(chunkBuffer);
+                            break;
                         }
-                        free(buffer);
+                        free(chunkBuffer);
                     }
                 }
+
+                free(probeBuffer);
                 address += regionSize;
             }
 
@@ -438,6 +493,32 @@ static void ScanHeapMemory(void) {
             recordScan(@"堆扫描异常", [NSString stringWithFormat:@"%@", e.reason]);
         }
     }
+}
+
+static void ScanHeapBuffer(uint8_t *buffer, vm_size_t bytesRead,
+                           NSUInteger *totalScanned, NSUInteger *totalBlocks) {
+    if (!buffer || bytesRead < 64) return;
+
+    // 快速预检：采样检查前64字节是否全0或全FF
+    uint8_t first = buffer[0];
+    BOOL allSame = YES;
+    for (NSUInteger i = 1; i < 64; i++) {
+        if (buffer[i] != first) { allSame = NO; break; }
+    }
+    if (allSame) return;
+
+    ScanForKeyLengthPatterns(buffer, bytesRead, "堆内存");
+
+    if (bytesRead >= 64) {
+        ScanForBase64Keys(buffer, bytesRead, "堆内存");
+    }
+
+    if (bytesRead >= 256) {
+        ScanForHighEntropyBlocks(buffer, bytesRead, "堆内存", 7.8, 256, 4096);
+    }
+
+    (*totalScanned) += bytesRead;
+    (*totalBlocks)++;
 }
 
 #pragma mark - 优先扫描目标库
