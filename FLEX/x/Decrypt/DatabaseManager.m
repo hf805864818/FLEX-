@@ -82,7 +82,7 @@
         @"CREATE TABLE IF NOT EXISTS dynamic_hook (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
         @"CREATE TABLE IF NOT EXISTS memory_scan (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
         @"CREATE TABLE IF NOT EXISTS func_intercept (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
-        @"CREATE TABLE IF NOT EXISTS kaiguan (bundleID TEXT PRIMARY KEY, zongkaiguan INTEGER DEFAULT 0, zhaiyaokaiguan INTEGER DEFAULT 0, hanmiyaokaiguan INTEGER DEFAULT 0, jiamisuanfakaiguan INTEGER DEFAULT 0, ssl3kaiguan INTEGER DEFAULT 0, proxy_bypass INTEGER DEFAULT 0, rsa_encrypt INTEGER DEFAULT 0, rsa_decrypt INTEGER DEFAULT 0, rsa_sign INTEGER DEFAULT 0, dynamic_hook_enabled INTEGER DEFAULT 0, func_intercept_enabled INTEGER DEFAULT 0)"
+        @"CREATE TABLE IF NOT EXISTS kaiguan (bundleID TEXT PRIMARY KEY, zongkaiguan INTEGER DEFAULT 0, zhaiyaokaiguan INTEGER DEFAULT 0, hanmiyaokaiguan INTEGER DEFAULT 0, jiamisuanfakaiguan INTEGER DEFAULT 0, ssl3kaiguan INTEGER DEFAULT 0, proxy_bypass INTEGER DEFAULT 0, rsa_encrypt INTEGER DEFAULT 0, rsa_decrypt INTEGER DEFAULT 0, rsa_sign INTEGER DEFAULT 0, dynamic_hook_enabled INTEGER DEFAULT 0, func_intercept_enabled INTEGER DEFAULT 0, pointycastle_hook_enabled INTEGER DEFAULT 0)"
     ];
 
     for (NSString *sql in sqls) {
@@ -92,6 +92,7 @@
     // 迁移：为已存在的 kaiguan 表添加新列（SQLite 不自动 ALTER TABLE）
     [self execSQL:@"ALTER TABLE kaiguan ADD COLUMN dynamic_hook_enabled INTEGER DEFAULT 0"];
     [self execSQL:@"ALTER TABLE kaiguan ADD COLUMN func_intercept_enabled INTEGER DEFAULT 0"];
+    [self execSQL:@"ALTER TABLE kaiguan ADD COLUMN pointycastle_hook_enabled INTEGER DEFAULT 0"];
 }
 
 - (BOOL)isAllowedTable:(NSString *)table {
