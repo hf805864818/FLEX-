@@ -3,6 +3,7 @@
 #import "../FuncIntercept/UCFuncInterceptManager.h"
 #import "../DynamicHook/UCDynamicHookManager.h"
 #import "../MemoryScan/UCMemoryScanManager.h"
+#import "../PointCastleHook/UCPointCastleHookManager.h"
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <Security/Security.h>
@@ -116,6 +117,15 @@ NSString *HexStringFromBytes(const void *bytes, size_t length) {
 
             // 内存扫描模块（始终启用，可通过面板手动控制）
             [[UCMemoryScanManager sharedManager] startScan];
+
+            // PointCastleHook：针对 Flutter / pointycastle 的 AES 密钥捕获
+            BOOL pointCastleEnabled = [[DatabaseManager sharedManager]
+                getSwitch:@"pointycastle_hook_enabled"
+                bundleID:CurrentBundleID()
+                defaultValue:NO];
+            if (pointCastleEnabled) {
+                [[UCPointCastleHookManager sharedManager] installHooks];
+            }
         }
     });
 }

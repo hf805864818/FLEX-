@@ -13,6 +13,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (NSArray<NSDictionary *> *)queryAllRecordsFromTable:(NSString *)table limit:(NSInteger)limit;
 - (void)clearTable:(NSString *)table;
 
+- (void)insertPointCastleKey:(NSString *)keyHex bundleID:(NSString *)bundleID detail:(NSString *)detail;
+- (NSArray<NSDictionary *> *)queryPointCastleKeysForBundleID:(NSString *)bundleID limit:(NSInteger)limit;
+
 - (BOOL)getSwitch:(NSString *)switchName bundleID:(NSString *)bundleID defaultValue:(BOOL)defaultValue;
 - (void)setSwitch:(NSString *)switchName bundleID:(NSString *)bundleID value:(BOOL)value;
 

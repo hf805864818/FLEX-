@@ -78,6 +78,7 @@
         @"CREATE TABLE IF NOT EXISTS decrypt_data (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
         @"CREATE TABLE IF NOT EXISTS url_responses (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
         @"CREATE TABLE IF NOT EXISTS crypto_keys (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
+        @"CREATE TABLE IF NOT EXISTS pointycastle_keys (bundleID TEXT, keyHex TEXT, detail TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
         @"CREATE TABLE IF NOT EXISTS dynamic_hook (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
         @"CREATE TABLE IF NOT EXISTS memory_scan (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
         @"CREATE TABLE IF NOT EXISTS func_intercept (bundleID TEXT, longText TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)",
@@ -100,7 +101,7 @@
         allowedTables = [NSSet setWithArray:@[@"zhaiyao", @"hanmiyao", @"jiamisuanfa", @"yunxingrizhi",
                                                @"kaiguan", @"ssl_certificates", @"ssl_challenges",
                                                @"ssl_psk", @"proxy_settings", @"rsa_data", @"decrypt_data",
-                                               @"url_responses", @"crypto_keys",
+                                               @"url_responses", @"crypto_keys", @"pointycastle_keys",
                                                @"dynamic_hook", @"memory_scan", @"func_intercept"]];
     });
     return [allowedTables containsObject:table];
@@ -206,6 +207,63 @@
     return results;
 }
 
+#pragma mark - PointCastle Keys
+
+- (void)insertPointCastleKey:(NSString *)keyHex bundleID:(NSString *)bundleID detail:(NSString *)detail {
+    if (!keyHex || !bundleID) return;
+
+    dispatch_async(self.dbQueue, ^{
+        if (![self openDatabase]) return;
+
+        const char *sql = "INSERT INTO pointycastle_keys (bundleID, keyHex, detail) VALUES (?, ?, ?)";
+        sqlite3_stmt *stmt = NULL;
+        int rc = sqlite3_prepare_v2(self.db, sql, -1, &stmt, NULL);
+        if (rc == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, bundleID.UTF8String, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 2, keyHex.UTF8String, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 3, detail.UTF8String, -1, SQLITE_TRANSIENT);
+            int step = sqlite3_step(stmt);
+            if (step != SQLITE_DONE) {
+                NSLog(@"[DatabaseManager] insert pointycastle_keys step failed: %d (%s)", step, sqlite3_errmsg(self.db));
+            }
+        } else {
+            NSLog(@"[DatabaseManager] insert pointycastle_keys prepare failed: %d (%s)", rc, sqlite3_errmsg(self.db));
+        }
+        sqlite3_finalize(stmt);
+    });
+}
+
+- (NSArray<NSDictionary *> *)queryPointCastleKeysForBundleID:(NSString *)bundleID limit:(NSInteger)limit {
+    if (!bundleID) return @[];
+    if (limit <= 0) limit = 100;
+
+    __block NSMutableArray *results = [NSMutableArray array];
+    dispatch_sync(self.dbQueue, ^{
+        if (![self openDatabase]) return;
+
+        const char *sql = "SELECT * FROM pointycastle_keys WHERE bundleID = ? ORDER BY ROWID DESC LIMIT ?";
+        sqlite3_stmt *stmt = NULL;
+        if (sqlite3_prepare_v2(self.db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_text(stmt, 1, bundleID.UTF8String, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt, 2, (int)limit);
+            int colCount = sqlite3_column_count(stmt);
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                NSMutableDictionary *row = [NSMutableDictionary dictionary];
+                for (int i = 0; i < colCount; i++) {
+                    const char *colName = sqlite3_column_name(stmt, i);
+                    const unsigned char *text = sqlite3_column_text(stmt, i);
+                    if (colName && text) {
+                        row[@(colName)] = [NSString stringWithUTF8String:(const char *)text];
+                    }
+                }
+                [results addObject:row];
+            }
+        }
+        sqlite3_finalize(stmt);
+    });
+    return results;
+}
+
 - (void)clearTable:(NSString *)table {
     if (![self isAllowedTable:table]) return;
     [self execSQL:[NSString stringWithFormat:@"DELETE FROM %@", table]];
@@ -277,7 +335,8 @@
                                                   @"hanmiyaokaiguan", @"jiamisuanfakaiguan",
                                                   @"ssl3kaiguan", @"proxy_bypass", @"rsa_encrypt",
                                                   @"rsa_decrypt", @"rsa_sign",
-                                                  @"dynamic_hook_enabled", @"func_intercept_enabled"]];
+                                                  @"dynamic_hook_enabled", @"func_intercept_enabled",
+                                                  @"pointycastle_hook_enabled"]];
     });
     return [allowedSwitches containsObject:switchName];
 }
