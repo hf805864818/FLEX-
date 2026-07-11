@@ -12,6 +12,91 @@ static pthread_mutex_t gScanLock = PTHREAD_MUTEX_INITIALIZER;
 static NSTimeInterval gLastScanTime = 0;
 static BOOL gIsScanning = NO;
 
+// ─── 自定义 NSURLProtocol ───
+// 直接注册一个 NSURLProtocol 子类，拦截所有 HTTP/HTTPS 响应，
+// 不依赖 URLCapture.m 的 NSURLSession hook（Flutter 的 dart:io
+// 在 iOS 上的 NSURLSession 用法可能没被 URLCapture.m 覆盖到）。
+//
+// 注意：这个 protocol 只"观察"响应，不修改也不拦截，
+// 请求仍然由原来的 NSURLSession/NSURLConnection 处理。
+//
+// 实现方式：用一个临时的 NSURLSessionDataTask 来获取响应数据，
+// 然后调用 client 回传。这样既能拿到响应明文，又不改变行为。
+
+@interface UCPointCastleURLProtocol : NSURLProtocol <NSURLSessionDataDelegate>
+@property (nonatomic, strong) NSURLSessionDataTask *dataTask;
+@property (nonatomic, strong) NSMutableData *responseData;
+@end
+
+@implementation UCPointCastleURLProtocol
+
++ (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    // 只处理 http/https
+    NSString *scheme = request.URL.scheme.lowercaseString;
+    if (![scheme isEqualToString:@"http"] && ![scheme isEqualToString:@"https"]) {
+        return NO;
+    }
+    // 防止递归
+    if ([NSURLProtocol propertyForKey:@"UCPointCastleHandled" inRequest:request]) {
+        return NO;
+    }
+    return YES;
+}
+
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
+    return request;
+}
+
++ (BOOL)requestIsCacheEquivalent:(NSURLRequest *)a toRequest:(NSURLRequest *)b {
+    return [super requestIsCacheEquivalent:a toRequest:b];
+}
+
+- (void)startLoading {
+    NSMutableURLRequest *mutableReq = [self.request mutableCopy];
+    [NSURLProtocol setProperty:@YES forKey:@"UCPointCastleHandled" inRequest:mutableReq];
+
+    self.responseData = [NSMutableData data];
+
+    // 用共享 session 发请求，走系统默认配置
+    NSURLSession *session = [NSURLSession sharedSession];
+    self.dataTask = [session dataTaskWithRequest:mutableReq
+                               completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        if (data) {
+            [self.responseData appendData:data];
+        }
+
+        // 检测 MDTV 响应
+        if (data.length > 0 && response) {
+            [UCPointCastleHookManager handleDecryptedResponse:data];
+        }
+
+        // 回传给 client
+        if (response) {
+            [self.client URLProtocol:self didReceiveResponse:response
+                   cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+        }
+        if (data) {
+            [self.client URLProtocol:self didLoadData:data];
+        }
+        if (error) {
+            [self.client URLProtocol:self didFailWithError:error];
+        } else {
+            [self.client URLProtocolDidFinishLoading:self];
+        }
+    }];
+    [self.dataTask resume];
+}
+
+- (void)stopLoading {
+    [self.dataTask cancel];
+    self.dataTask = nil;
+    self.responseData = nil;
+}
+
+@end
+
+// ─── 主管理器 ───
+
 @interface UCPointCastleHookManager ()
 @end
 
@@ -26,17 +111,64 @@ static BOOL gIsScanning = NO;
     return instance;
 }
 
-#pragma mark - 安装 Hooks（保留兼容性）
+#pragma mark - 安装 Hooks
 
 - (void)installHooks {
-    // 不再使用 SSL_read / socket hook。
-    // 真正的响应捕获由 URLCapture.m 的 NSURLSession hook 完成，
-    // 在 SaveURLResponse 中调用 +[UCPointCastleHookManager handleDecryptedResponse:]。
-    NSLog(@"[PointCastleHook] hooks registered (piggyback on URLCapture.m NSURLSession hooks)");
-    [[DatabaseManager sharedManager] insertLogText:@"[PointCastleHook] hooks registered (piggyback on URLCapture)"];
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        // 注册自定义 NSURLProtocol，拦截所有 HTTP/HTTPS 响应
+        [NSURLProtocol registerClass:[UCPointCastleURLProtocol class]];
+
+        // 同时修改 default 和 ephemeral session 配置，
+        // 确保 NSURLSession 也会经过我们的 protocol
+        Class configCls = [NSURLSessionConfiguration class];
+        SEL defaultSel = @selector(defaultSessionConfiguration);
+        SEL ephemeralSel = @selector(ephemeralSessionConfiguration);
+
+        Method defaultMethod = class_getClassMethod(configCls, defaultSel);
+        Method ephemeralMethod = class_getClassMethod(configCls, ephemeralSel);
+
+        if (defaultMethod) {
+            IMP originalImp = method_getImplementation(defaultMethod);
+            typedef NSURLSessionConfiguration *(*ConfigFunc)(id, SEL);
+            ConfigFunc original = (ConfigFunc)originalImp;
+
+            IMP newImp = imp_implementationWithBlock(^NSURLSessionConfiguration *(id self) {
+                NSURLSessionConfiguration *config = original(self, defaultSel);
+                NSMutableArray *protocols = [config.protocolClasses mutableCopy] ?: [NSMutableArray array];
+                if (![protocols containsObject:[UCPointCastleURLProtocol class]]) {
+                    [protocols insertObject:[UCPointCastleURLProtocol class] atIndex:0];
+                    config.protocolClasses = protocols;
+                }
+                return config;
+            });
+            method_setImplementation(defaultMethod, newImp);
+        }
+
+        if (ephemeralMethod) {
+            IMP originalImp = method_getImplementation(ephemeralMethod);
+            typedef NSURLSessionConfiguration *(*ConfigFunc)(id, SEL);
+            ConfigFunc original = (ConfigFunc)originalImp;
+
+            IMP newImp = imp_implementationWithBlock(^NSURLSessionConfiguration *(id self) {
+                NSURLSessionConfiguration *config = original(self, ephemeralSel);
+                NSMutableArray *protocols = [config.protocolClasses mutableCopy] ?: [NSMutableArray array];
+                if (![protocols containsObject:[UCPointCastleURLProtocol class]]) {
+                    [protocols insertObject:[UCPointCastleURLProtocol class] atIndex:0];
+                    config.protocolClasses = protocols;
+                }
+                return config;
+            });
+            method_setImplementation(ephemeralMethod, newImp);
+        }
+
+        NSString *log = @"[PointCastleHook] NSURLProtocol hooks installed";
+        NSLog(@"%@", log);
+        [[DatabaseManager sharedManager] insertLogText:log];
+    });
 }
 
-#pragma mark - 由 URLCapture.m 调用的入口
+#pragma mark - 响应检测入口
 
 + (void)handleDecryptedResponse:(NSData *)body {
     if (!body || body.length < 64) return;
