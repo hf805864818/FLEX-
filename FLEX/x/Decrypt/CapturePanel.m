@@ -318,7 +318,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 0) return self.switchItems.count;
-    if (section == 1) return 2;
+    if (section == 1) return 3;
     return 1;
 }
 
@@ -375,11 +375,16 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             NSArray *records = [db queryAllRecordsFromTable:@"decrypt_data" limit:9999];
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)records.count];
             cell.detailTextLabel.textColor = [UIColor colorWithRed:0.2 green:0.78 blue:0.4 alpha:1.0];
-        } else {
+        } else if (indexPath.row == 1) {
             cell.textLabel.text = @"算法调用记录";
             NSArray *records = [db queryAllRecordsFromTable:@"jiamisuanfa" limit:9999];
             cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)records.count];
             cell.detailTextLabel.textColor = [UIColor colorWithRed:0.78 green:0.4 blue:1.0 alpha:1.0];
+        } else {
+            cell.textLabel.text = @"PointCastle 密钥";
+            NSArray *records = [db queryAllRecordsFromTable:@"pointycastle_keys" limit:9999];
+            cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)records.count];
+            cell.detailTextLabel.textColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.5 alpha:1.0];
         }
         
         cell.textLabel.textColor = FLEXColor.primaryTextColor;
