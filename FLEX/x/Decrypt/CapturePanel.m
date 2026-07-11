@@ -318,7 +318,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 0) return self.switchItems.count;
-    if (section == 1) return 3;
+    if (section == 1) return 8;  // 解密/密钥/算法/动态Hook/内存扫描/函数拦截/Socket/PointCastle
     return 1;
 }
 
@@ -370,22 +370,25 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         
         DatabaseManager *db = [DatabaseManager sharedManager];
         
-        if (indexPath.row == 0) {
-            cell.textLabel.text = @"解密记录";
-            NSArray *records = [db queryAllRecordsFromTable:@"decrypt_data" limit:9999];
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)records.count];
-            cell.detailTextLabel.textColor = [UIColor colorWithRed:0.2 green:0.78 blue:0.4 alpha:1.0];
-        } else if (indexPath.row == 1) {
-            cell.textLabel.text = @"算法调用记录";
-            NSArray *records = [db queryAllRecordsFromTable:@"jiamisuanfa" limit:9999];
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)records.count];
-            cell.detailTextLabel.textColor = [UIColor colorWithRed:0.78 green:0.4 blue:1.0 alpha:1.0];
-        } else {
-            cell.textLabel.text = @"PointCastle 密钥";
-            NSArray *records = [db queryAllRecordsFromTable:@"pointycastle_keys" limit:9999];
-            cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)records.count];
-            cell.detailTextLabel.textColor = [UIColor colorWithRed:0.9 green:0.3 blue:0.5 alpha:1.0];
-        }
+        NSArray<NSDictionary *> *statItems = @[
+            @{@"title": @"解密记录",     @"table": @"decrypt_data",      @"r": @0.2,  @"g": @0.78, @"b": @0.4},
+            @{@"title": @"密钥记录",     @"table": @"crypto_keys",       @"r": @1.0,  @"g": @0.55, @"b": @0.1},
+            @{@"title": @"算法调用记录", @"table": @"jiamisuanfa",       @"r": @0.78, @"g": @0.4,  @"b": @1.0},
+            @{@"title": @"动态Hook记录", @"table": @"dynamic_hook",      @"r": @0.3,  @"g": @0.5,  @"b": @1.0},
+            @{@"title": @"内存扫描记录", @"table": @"memory_scan",       @"r": @1.0,  @"g": @0.4,  @"b": @0.6},
+            @{@"title": @"函数拦截记录", @"table": @"func_intercept",    @"r": @0.1,  @"g": @0.7,  @"b": @0.9},
+            @{@"title": @"Socket记录",   @"table": @"url_responses",     @"r": @1.0,  @"g": @0.5,  @"b": @0.0},
+            @{@"title": @"PointCastle密钥", @"table": @"pointycastle_keys", @"r": @0.9,  @"g": @0.3,  @"b": @0.5},
+        ];
+
+        NSDictionary *item = statItems[indexPath.row];
+        cell.textLabel.text = item[@"title"];
+        NSArray *records = [db queryAllRecordsFromTable:item[@"table"] limit:9999];
+        cell.detailTextLabel.text = [NSString stringWithFormat:@"%lu", (unsigned long)records.count];
+        cell.detailTextLabel.textColor = [UIColor colorWithRed:[item[@"r"] doubleValue]
+                                                         green:[item[@"g"] doubleValue]
+                                                          blue:[item[@"b"] doubleValue]
+                                                         alpha:1.0];
         
         cell.textLabel.textColor = FLEXColor.primaryTextColor;
         return cell;
