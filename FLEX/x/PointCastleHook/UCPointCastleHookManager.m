@@ -14,7 +14,7 @@
 // 目标域名关键字
 static NSString * const kMDTVHostKeyword = @"nzp1ve";
 
-// 响应体缓存阈值（MDTV JSON 响应通常只有几 KB，不要缓存视频/图片二进制流）
+// 响应体缓存阈值（MDTV JSON 响应通常只有几 KB）
 static const NSUInteger kMaxResponseBuffer = 64 * 1024;  // 64KB
 
 // 同一个 fd 的去抖间隔（秒）
@@ -30,14 +30,11 @@ static int (*orig_connect)(int, const struct sockaddr *, socklen_t) = NULL;
 static ssize_t (*orig_recvmsg)(int, struct msghdr *, int) = NULL;
 static ssize_t (*orig_recv)(int, void *, size_t, int) = NULL;
 
-// 记录目标 fd
-static NSMutableSet<NSNumber *> *gTargetFds = nil;
-static dispatch_queue_t gHookQueue = nil;
-
-// 每个 fd 的响应体缓冲
+// 每个 fd 的响应体缓冲（只保留最近活跃的 fd，防止泄漏）
 static NSMutableDictionary<NSNumber *, NSMutableData *> *gResponseBuffers = nil;
-// 每个目标 fd 的最后活动时间（用于清理过期 fd，防止连接关闭后 buffer 残留）
 static NSMutableDictionary<NSNumber *, NSDate *> *gFdLastActivity = nil;
+static dispatch_queue_t gHookQueue = nil;
+static BOOL gHooksInstalled = NO;
 
 @interface UCPointCastleHookManager ()
 @end
@@ -47,7 +44,6 @@ static NSMutableDictionary<NSNumber *, NSDate *> *gFdLastActivity = nil;
 + (void)initialize {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        gTargetFds = [NSMutableSet set];
         gResponseBuffers = [NSMutableDictionary dictionary];
         gFdLastActivity = [NSMutableDictionary dictionary];
         gHookQueue = dispatch_queue_create("com.flex.pointycastle.hook", DISPATCH_QUEUE_SERIAL);
@@ -66,49 +62,48 @@ static NSMutableDictionary<NSNumber *, NSDate *> *gFdLastActivity = nil;
 #pragma mark - 安装 Hooks
 
 - (void)installHooks {
-    dispatch_async(gHookQueue, ^{
-        struct rebinding rebindings[] = {
-            {"connect",  hooked_connect,  (void **)&orig_connect},
-            {"recvmsg",  hooked_recvmsg,  (void **)&orig_recvmsg},
-            {"recv",     hooked_recv,     (void **)&orig_recv},
-        };
+    if (gHooksInstalled) {
+        NSLog(@"[PointCastleHook] hooks already installed, skipping");
+        return;
+    }
 
-        int count = sizeof(rebindings) / sizeof(rebindings[0]);
-        int result = rebind_symbols(rebindings, count);
+    struct rebinding rebindings[] = {
+        {"connect",  hooked_connect,  (void **)&orig_connect},
+        {"recvmsg",  hooked_recvmsg,  (void **)&orig_recvmsg},
+        {"recv",     hooked_recv,     (void **)&orig_recv},
+    };
 
-        NSUInteger success = 0;
-        if (orig_connect) success++;
-        if (orig_recvmsg) success++;
-        if (orig_recv) success++;
+    int count = sizeof(rebindings) / sizeof(rebindings[0]);
+    int result = rebind_symbols(rebindings, count);
 
-        NSString *log = [NSString stringWithFormat:
-                         @"[PointCastleHook] installed: %lu/%d (rebind=%d)",
-                         (unsigned long)success, count, result];
-        NSLog(@"%@", log);
-        [[DatabaseManager sharedManager] insertLogText:log];
+    NSUInteger success = 0;
+    if (orig_connect) success++;
+    if (orig_recvmsg) success++;
+    if (orig_recv) success++;
 
-        // 兜底：dlsym 获取原始函数
-        if (!orig_connect) orig_connect = dlsym(RTLD_DEFAULT, "connect");
-        if (!orig_recvmsg) orig_recvmsg = dlsym(RTLD_DEFAULT, "recvmsg");
-        if (!orig_recv)    orig_recv    = dlsym(RTLD_DEFAULT, "recv");
-    });
+    NSString *log = [NSString stringWithFormat:
+                     @"[PointCastleHook] installed: %lu/%d (rebind=%d)",
+                     (unsigned long)success, count, result];
+    NSLog(@"%@", log);
+    [[DatabaseManager sharedManager] insertLogText:log];
+
+    // 兜底：dlsym 获取原始函数
+    if (!orig_connect) orig_connect = dlsym(RTLD_DEFAULT, "connect");
+    if (!orig_recvmsg) orig_recvmsg = dlsym(RTLD_DEFAULT, "recvmsg");
+    if (!orig_recv)    orig_recv    = dlsym(RTLD_DEFAULT, "recv");
+
+    gHooksInstalled = YES;
 }
 
 #pragma mark - Hook 函数
 
+// connect 不再用于 fd 过滤，只保留日志记录
 static int hooked_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
     int ret = orig_connect ? orig_connect(sockfd, addr, addrlen) : connect(sockfd, addr, addrlen);
 
     if (ret == 0 && addr && addrlen >= sizeof(struct sockaddr)) {
-        NSString *targetInfo = [UCPointCastleHookManager endpointDescription:addr];
-        if (targetInfo && [targetInfo rangeOfString:kMDTVHostKeyword options:NSCaseInsensitiveSearch].location != NSNotFound) {
-            dispatch_async(gHookQueue, ^{
-                [gTargetFds addObject:@(sockfd)];
-            });
-            NSString *log = [NSString stringWithFormat:@"[PointCastleHook] target connect fd=%d %@", sockfd, targetInfo];
-            NSLog(@"%@", log);
-            [[DatabaseManager sharedManager] insertLogText:log];
-        }
+        // 仅记录日志，不再用于 fd 过滤
+        // （endpointDescription 返回 IP 地址，无法匹配域名关键字）
     }
 
     return ret;
@@ -153,25 +148,12 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
 + (void)handleReceivedData:(NSData *)data onFd:(int)fd {
     if (!data || data.length == 0) return;
 
+    // 定期清理过期 fd 的 buffer
     [self cleanupStaleEntries];
 
-    // 丢弃明显是二进制的数据（视频/图片/加密流），避免大内存分配和缓存
+    // 快速预筛：丢弃明显是二进制流的数据（视频/图片/加密流）
+    // 阈值降低到 50% 以避免误判短 chunk
     if (![self isLikelyTextData:data]) return;
-
-    __block BOOL isTarget = NO;
-    dispatch_sync(gHookQueue, ^{
-        isTarget = [gTargetFds containsObject:@(fd)];
-    });
-    if (!isTarget) return;
-
-    // 简单协议识别：MDTV 响应是 HTTP/1.1 或 HTTP/2 封装后的 JSON
-    // 先尝试把当前 chunk 当文本看看是否含关键字
-    NSString *preview = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    if (preview && ([preview rangeOfString:@"\"data\""].location != NSNotFound ||
-                    [preview rangeOfString:@"\"suffix\""].location != NSNotFound ||
-                    [preview rangeOfString:kMDTVHostKeyword].location != NSNotFound)) {
-        // 可能已经开始进入 body
-    }
 
     // 累积缓冲
     dispatch_async(gHookQueue, ^{
@@ -186,10 +168,9 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
         [buffer appendData:data];
 
         if (buffer.length > kMaxResponseBuffer) {
-            buffer.length = kMaxResponseBuffer; // 截断防 OOM
+            buffer.length = kMaxResponseBuffer;
         }
 
-        // 累积到一定量或遇到结束特征后触发解析
         [self tryParseResponseBuffer:buffer fd:fd];
     });
 }
@@ -197,19 +178,18 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
 + (void)tryParseResponseBuffer:(NSMutableData *)buffer fd:(int)fd {
     if (buffer.length < 64) return;
 
-    // 记录活动时间，用于过期清理
     NSNumber *fdKey = @(fd);
     gFdLastActivity[fdKey] = [NSDate date];
 
-    // 只解析尾部 8KB，避免为视频/图片等大响应分配巨大 NSString
+    // 只解析尾部 8KB，避免为大响应分配巨大 NSString
     static const NSUInteger kParseWindowSize = 8 * 1024;
     NSUInteger parseLen = MIN(buffer.length, kParseWindowSize);
     NSData *tailData = [buffer subdataWithRange:NSMakeRange(buffer.length - parseLen, parseLen)];
 
-    // 从 buffer 尾部开始查找 JSON 对象 {"suffix":"...","data":"..."}
     NSString *text = [[NSString alloc] initWithData:tailData encoding:NSUTF8StringEncoding];
     if (!text) return;
 
+    // 查找 MDTV 响应特征：{"suffix":"...","data":"..."}
     NSRange dataRange = [text rangeOfString:@"\"data\"" options:NSBackwardsSearch];
     if (dataRange.location == NSNotFound) return;
 
@@ -217,23 +197,30 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
     if (suffixRange.location == NSNotFound) return;
 
     // 提取 suffix（6 位 hex）
-    NSString *suffix = [self extractJSONStringValue:text key:@"suffix" searchRange:NSMakeRange(suffixRange.location, MIN(64, text.length - suffixRange.location))];
-    NSString *b64Data = [self extractJSONStringValue:text key:@"data" searchRange:NSMakeRange(dataRange.location, MIN(2048, text.length - dataRange.location))];
+    NSUInteger suffixSearchStart = suffixRange.location;
+    NSUInteger suffixSearchLen = MIN(64, text.length - suffixSearchStart);
+    NSString *suffix = [self extractJSONStringValue:text key:@"suffix"
+                                        searchRange:NSMakeRange(suffixSearchStart, suffixSearchLen)];
+
+    NSUInteger dataSearchStart = dataRange.location;
+    NSUInteger dataSearchLen = MIN(2048, text.length - dataSearchStart);
+    NSString *b64Data = [self extractJSONStringValue:text key:@"data"
+                                        searchRange:NSMakeRange(dataSearchStart, dataSearchLen)];
 
     if (!suffix || suffix.length != 6 || !b64Data || b64Data.length < 16) return;
 
     // 清除缓冲避免重复触发
     [buffer setLength:0];
 
-    NSString *log = [NSString stringWithFormat:@"[PointCastleHook] captured response suffix=%@ dataLen=%lu fd=%d", suffix, (unsigned long)b64Data.length, fd];
+    NSString *log = [NSString stringWithFormat:@"[PointCastleHook] captured response suffix=%@ dataLen=%lu fd=%d",
+                     suffix, (unsigned long)b64Data.length, fd];
     NSLog(@"%@", log);
     [[DatabaseManager sharedManager] insertLogText:log];
 
-    NSData *cipherData = [[NSData alloc] initWithBase64EncodedString:b64Data options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    NSData *cipherData = [[NSData alloc] initWithBase64EncodedString:b64Data
+                                                             options:NSDataBase64DecodingIgnoreUnknownCharacters];
     if (!cipherData || cipherData.length == 0) return;
 
-    // IV：suffix 是 6 位 hex，pointycastle 常见做法是在 IV 前补零到 16 字节，
-    // 也可能直接把 suffix 当 hex 转成 3 字节后再补齐，这里同时尝试几种。
     NSArray<NSData *> *ivCandidates = [self ivCandidatesFromSuffix:suffix];
 
     [self triggerScanAndValidateWithCiphertext:cipherData ivCandidates:ivCandidates];
@@ -285,14 +272,14 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
     }
     [ivs addObject:iv1];
 
-    // 2. suffix 直接 UTF-8 编码后补零到 16 字节（某些 app 简单实现）
+    // 2. suffix 直接 UTF-8 编码后补零到 16 字节
     NSData *suffixData = [suffix dataUsingEncoding:NSUTF8StringEncoding];
     NSMutableData *iv2 = [NSMutableData dataWithLength:16];
     memset(iv2.mutableBytes, 0, 16);
     memcpy(iv2.mutableBytes, suffixData.bytes, MIN(suffixData.length, 16));
     [ivs addObject:iv2];
 
-    // 3. 全零 IV（ECB 候选实际上会忽略 IV，但保留统一接口）
+    // 3. 全零 IV
     [ivs addObject:[NSMutableData dataWithLength:16]];
 
     return ivs;
@@ -311,11 +298,11 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
     gLastScanTime = now;
     pthread_mutex_unlock(&gScanLock);
 
-    NSString *log = [NSString stringWithFormat:@"[PointCastleHook] start scan for ciphertext length=%lu", (unsigned long)ciphertext.length];
+    NSString *log = [NSString stringWithFormat:@"[PointCastleHook] start scan for ciphertext length=%lu",
+                     (unsigned long)ciphertext.length];
     NSLog(@"%@", log);
     [[DatabaseManager sharedManager] insertLogText:log];
 
-    // 候选数量降低 + 验证放到后台线程，避免阻塞主线程或被 Jetsam
     [[UCDartMemoryScanner sharedScanner] scanForAESKeyCandidates:100 completion:^(NSArray<NSData *> *candidates) {
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
             [self validateCandidates:candidates ciphertext:ciphertext ivCandidates:ivCandidates];
@@ -364,13 +351,16 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
 #pragma mark - 过期 fd / buffer 清理
 
 + (void)cleanupStaleEntries {
+    // 限制同时活跃的 fd 数量，防止 buffer 无限增长
     dispatch_async(gHookQueue, ^{
         NSDate *now = [NSDate date];
         NSArray<NSNumber *> *keys = [gFdLastActivity allKeys];
+
+        // 超过 30 秒不活动或总数超过 50 个 fd 时清理
+        BOOL needCleanup = (keys.count > 50);
         for (NSNumber *fdKey in keys) {
             NSDate *last = gFdLastActivity[fdKey];
-            if (!last || [now timeIntervalSinceDate:last] > 30.0) {
-                [gTargetFds removeObject:fdKey];
+            if (needCleanup || !last || [now timeIntervalSinceDate:last] > 30.0) {
                 [gResponseBuffers removeObjectForKey:fdKey];
                 [gFdLastActivity removeObjectForKey:fdKey];
             }
@@ -401,7 +391,8 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
         }
     }
 
-    return (printable * 100 / sampleLen) >= 70;
+    // 降低到 50%：HTTP/2 响应开头可能包含少量二进制帧头
+    return (printable * 100 / sampleLen) >= 50;
 }
 
 + (nullable NSString *)endpointDescription:(const struct sockaddr *)addr {
