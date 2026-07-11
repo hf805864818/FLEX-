@@ -35,6 +35,8 @@ static dispatch_queue_t gHookQueue = nil;
 
 // 每个 fd 的响应体缓冲
 static NSMutableDictionary<NSNumber *, NSMutableData *> *gResponseBuffers = nil;
+// 每个目标 fd 的最后活动时间（用于清理过期 fd，防止连接关闭后 buffer 残留）
+static NSMutableDictionary<NSNumber *, NSDate *> *gFdLastActivity = nil;
 
 @interface UCPointCastleHookManager ()
 @end
@@ -46,6 +48,7 @@ static NSMutableDictionary<NSNumber *, NSMutableData *> *gResponseBuffers = nil;
     dispatch_once(&onceToken, ^{
         gTargetFds = [NSMutableSet set];
         gResponseBuffers = [NSMutableDictionary dictionary];
+        gFdLastActivity = [NSMutableDictionary dictionary];
         gHookQueue = dispatch_queue_create("com.flex.pointycastle.hook", DISPATCH_QUEUE_SERIAL);
     });
 }
@@ -149,6 +152,8 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
 + (void)handleReceivedData:(NSData *)data onFd:(int)fd {
     if (!data || data.length == 0) return;
 
+    [self cleanupStaleEntries];
+
     __block BOOL isTarget = NO;
     dispatch_sync(gHookQueue, ^{
         isTarget = [gTargetFds containsObject:@(fd)];
@@ -167,6 +172,8 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
     // 累积缓冲
     dispatch_async(gHookQueue, ^{
         NSNumber *fdKey = @(fd);
+        gFdLastActivity[fdKey] = [NSDate date];
+
         NSMutableData *buffer = gResponseBuffers[fdKey];
         if (!buffer) {
             buffer = [NSMutableData data];
@@ -185,6 +192,10 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
 
 + (void)tryParseResponseBuffer:(NSMutableData *)buffer fd:(int)fd {
     if (buffer.length < 64) return;
+
+    // 记录活动时间，用于过期清理
+    NSNumber *fdKey = @(fd);
+    gFdLastActivity[fdKey] = [NSDate date];
 
     // 从 buffer 尾部开始查找 JSON 对象 {"suffix":"...","data":"..."}
     NSString *text = [[NSString alloc] initWithData:buffer encoding:NSUTF8StringEncoding];
@@ -294,8 +305,11 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
     NSLog(@"%@", log);
     [[DatabaseManager sharedManager] insertLogText:log];
 
-    [[UCDartMemoryScanner sharedScanner] scanForAESKeyCandidates:300 completion:^(NSArray<NSData *> *candidates) {
-        [self validateCandidates:candidates ciphertext:ciphertext ivCandidates:ivCandidates];
+    // 候选数量降低 + 验证放到后台线程，避免阻塞主线程或被 Jetsam
+    [[UCDartMemoryScanner sharedScanner] scanForAESKeyCandidates:100 completion:^(NSArray<NSData *> *candidates) {
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            [self validateCandidates:candidates ciphertext:ciphertext ivCandidates:ivCandidates];
+        });
     }];
 }
 
@@ -331,6 +345,23 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
             [[DatabaseManager sharedManager] insertLogText:log];
         }
     }
+}
+
+#pragma mark - 过期 fd / buffer 清理
+
++ (void)cleanupStaleEntries {
+    dispatch_async(gHookQueue, ^{
+        NSDate *now = [NSDate date];
+        NSArray<NSNumber *> *keys = [gFdLastActivity allKeys];
+        for (NSNumber *fdKey in keys) {
+            NSDate *last = gFdLastActivity[fdKey];
+            if (!last || [now timeIntervalSinceDate:last] > 30.0) {
+                [gTargetFds removeObject:fdKey];
+                [gResponseBuffers removeObjectForKey:fdKey];
+                [gFdLastActivity removeObjectForKey:fdKey];
+            }
+        }
+    });
 }
 
 #pragma mark - 手动触发（调试用）

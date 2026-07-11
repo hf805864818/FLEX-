@@ -6,9 +6,9 @@
 #import <CommonCrypto/CommonDigest.h>
 
 // 单次扫描上限：防止 OOM 或拖垮主线程
-static const NSUInteger kDefaultMaxScanBytes = 80 * 1024 * 1024;  // 80 MB
-static const NSUInteger kMinRegionSize = 1024;                      // 小于 1KB 的区域忽略
-static const vm_size_t kScanChunkSize = 256 * 1024;                 // 分块 256KB 安全读取
+static const NSUInteger kDefaultMaxScanBytes = 30 * 1024 * 1024;  // 30 MB（降低避免 Jetsam）
+static const NSUInteger kMinRegionSize = 1024;                     // 小于 1KB 的区域忽略
+static const vm_size_t kScanChunkSize = 256 * 1024;                // 分块 256KB 安全读取
 
 @interface UCDartMemoryScanner ()
 @property (nonatomic, strong) dispatch_queue_t scanQueue;
