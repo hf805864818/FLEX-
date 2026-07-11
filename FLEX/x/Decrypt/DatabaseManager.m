@@ -305,7 +305,8 @@
 - (void)setSwitch:(NSString *)switchName bundleID:(NSString *)bundleID value:(BOOL)value {
     if (![self isAllowedSwitch:switchName] || !bundleID) return;
 
-    dispatch_async(self.dbQueue, ^{
+    // 开关状态必须立即持久化，否则后续可能因崩溃而回滚
+    dispatch_sync(self.dbQueue, ^{
         if (![self openDatabase]) return;
 
         sqlite3_stmt *insertStmt = NULL;

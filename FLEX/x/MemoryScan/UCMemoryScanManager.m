@@ -596,7 +596,8 @@ static BOOL IsPriorityLib(const char *name) {
         NSLog(@"[MemoryScan] 开始异步深度扫描...");
 
         [self scanAllDylibs];
-        [self scanHeapMemory];
+        // [self scanHeapMemory]; // 已临时禁用：vm_region 堆扫描会误触 MALLOC guard page 导致 SIGBUS
+        // PointCastle 使用独立的 UCDartMemoryScanner 进行 Dart 堆扫描
 
         NSLog(@"[MemoryScan] 异步深度扫描完成 (本帧记录 %lu 条)", (unsigned long)gResultsCount);
     });
