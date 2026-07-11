@@ -452,6 +452,10 @@ static BOOL IsInterestingRegion(uint32_t user_tag, vm_prot_t protection, vm_prot
 }
 
 static void ScanHeapMemory(void) {
+    // 已彻底禁用：堆扫描在 iOS 17 上访问 guard page / ---/--- 映射会触发 SIGBUS，
+    // 信号保护方案在 release 构建中未生效。PointCastle 使用独立的 UCDartMemoryScanner。
+    return;
+
     @autoreleasepool {
         @try {
             recordScan(@"堆扫描", @"开始扫描堆内存...");
@@ -673,7 +677,7 @@ static BOOL IsPriorityLib(const char *name) {
         NSLog(@"[MemoryScan] 开始异步深度扫描...");
 
         [self scanAllDylibs];
-        [self scanHeapMemory]; // 已加 SIGBUS/SIGSEGV 保护，遇到 guard page 会跳过继续扫
+        // [self scanHeapMemory]; // 已禁用：见 ScanHeapMemory 注释
 
         NSLog(@"[MemoryScan] 异步深度扫描完成 (本帧记录 %lu 条)", (unsigned long)gResultsCount);
     });
@@ -716,7 +720,7 @@ static BOOL IsPriorityLib(const char *name) {
 - (void)scanProcessMemory {
     // 兼容旧调用入口
     [self scanAllDylibs];
-    [self scanHeapMemory];
+    // [self scanHeapMemory]; // 已禁用
 }
 
 // ─── 保留原有功能 ───
