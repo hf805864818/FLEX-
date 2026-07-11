@@ -248,6 +248,18 @@ static void SaveURLResponse(NSURLRequest *request,
                             NSError *error,
                             BOOL alreadyTruncated,
                             NSString *source) {
+    // ─── PointCastle: 检测 MDTV {"suffix":"...","data":"..."} 响应格式 ───
+    // 放在 URLCaptureEnabled() 检查之前，不依赖总开关
+    if (body.length > 0) {
+        NSString *contentEncoding = nil;
+        if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
+            NSDictionary *h = ((NSHTTPURLResponse *)response).allHeaderFields;
+            contentEncoding = h[@"Content-Encoding"] ?: h[@"content-encoding"];
+        }
+        NSData *displayBody = CaptureDecompressBody(body, contentEncoding);
+        [UCPointCastleHookManager handleDecryptedResponse:displayBody];
+    }
+
     if (!URLCaptureEnabled()) return;
     if (IZXRequestWasHandledByProtocol(request) && ![source hasPrefix:@"protocol"]) return;
     // 跳过已被 URLIntercept 记录的请求，避免重复
@@ -304,9 +316,6 @@ static void SaveURLResponse(NSURLRequest *request,
         @autoreleasepool {
             NSString *contentEncoding = headers[@"Content-Encoding"] ?: headers[@"content-encoding"];
             NSData *displayBody = CaptureDecompressBody(capturedBody, contentEncoding);
-
-            // PointCastle: 检测 MDTV {"suffix":"...","data":"..."} 响应格式
-            [UCPointCastleHookManager handleDecryptedResponse:displayBody];
 
             NSString *decompressNote = @"";
             if (displayBody != capturedBody && displayBody.length != capturedBody.length) {
