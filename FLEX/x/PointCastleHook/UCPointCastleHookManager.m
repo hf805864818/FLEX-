@@ -14,15 +14,16 @@
 // 目标域名关键字
 static NSString * const kMDTVHostKeyword = @"nzp1ve";
 
-// 响应体缓存阈值
-static const NSUInteger kMaxResponseBuffer = 2 * 1024 * 1024;  // 2MB
+// 响应体缓存阈值（MDTV JSON 响应通常只有几 KB，不要缓存视频/图片二进制流）
+static const NSUInteger kMaxResponseBuffer = 64 * 1024;  // 64KB
 
 // 同一个 fd 的去抖间隔（秒）
-static const NSTimeInterval kScanDebounceInterval = 1.5;
+static const NSTimeInterval kScanDebounceInterval = 5.0;
 
 // 扫描锁：防止并发拖垮性能
 static pthread_mutex_t gScanLock = PTHREAD_MUTEX_INITIALIZER;
 static NSTimeInterval gLastScanTime = 0;
+static BOOL gIsScanning = NO;
 
 // 原函数指针
 static int (*orig_connect)(int, const struct sockaddr *, socklen_t) = NULL;
@@ -154,6 +155,9 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
 
     [self cleanupStaleEntries];
 
+    // 丢弃明显是二进制的数据（视频/图片/加密流），避免大内存分配和缓存
+    if (![self isLikelyTextData:data]) return;
+
     __block BOOL isTarget = NO;
     dispatch_sync(gHookQueue, ^{
         isTarget = [gTargetFds containsObject:@(fd)];
@@ -197,8 +201,13 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
     NSNumber *fdKey = @(fd);
     gFdLastActivity[fdKey] = [NSDate date];
 
+    // 只解析尾部 8KB，避免为视频/图片等大响应分配巨大 NSString
+    static const NSUInteger kParseWindowSize = 8 * 1024;
+    NSUInteger parseLen = MIN(buffer.length, kParseWindowSize);
+    NSData *tailData = [buffer subdataWithRange:NSMakeRange(buffer.length - parseLen, parseLen)];
+
     // 从 buffer 尾部开始查找 JSON 对象 {"suffix":"...","data":"..."}
-    NSString *text = [[NSString alloc] initWithData:buffer encoding:NSUTF8StringEncoding];
+    NSString *text = [[NSString alloc] initWithData:tailData encoding:NSUTF8StringEncoding];
     if (!text) return;
 
     NSRange dataRange = [text rangeOfString:@"\"data\"" options:NSBackwardsSearch];
@@ -294,10 +303,11 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
 + (void)triggerScanAndValidateWithCiphertext:(NSData *)ciphertext ivCandidates:(NSArray<NSData *> *)ivCandidates {
     pthread_mutex_lock(&gScanLock);
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
-    if (now - gLastScanTime < kScanDebounceInterval) {
+    if (gIsScanning || now - gLastScanTime < kScanDebounceInterval) {
         pthread_mutex_unlock(&gScanLock);
         return;
     }
+    gIsScanning = YES;
     gLastScanTime = now;
     pthread_mutex_unlock(&gScanLock);
 
@@ -309,6 +319,10 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
     [[UCDartMemoryScanner sharedScanner] scanForAESKeyCandidates:100 completion:^(NSArray<NSData *> *candidates) {
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
             [self validateCandidates:candidates ciphertext:ciphertext ivCandidates:ivCandidates];
+
+            pthread_mutex_lock(&gScanLock);
+            gIsScanning = NO;
+            pthread_mutex_unlock(&gScanLock);
         });
     }];
 }
@@ -372,6 +386,23 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
 }
 
 #pragma mark - 工具方法
+
++ (BOOL)isLikelyTextData:(NSData *)data {
+    if (!data || data.length == 0) return NO;
+
+    const uint8_t *bytes = (const uint8_t *)data.bytes;
+    NSUInteger sampleLen = MIN(data.length, (NSUInteger)512);
+    NSUInteger printable = 0;
+
+    for (NSUInteger i = 0; i < sampleLen; i++) {
+        uint8_t c = bytes[i];
+        if ((c >= 0x20 && c <= 0x7E) || c == '\r' || c == '\n' || c == '\t') {
+            printable++;
+        }
+    }
+
+    return (printable * 100 / sampleLen) >= 70;
+}
 
 + (nullable NSString *)endpointDescription:(const struct sockaddr *)addr {
     if (!addr) return nil;
