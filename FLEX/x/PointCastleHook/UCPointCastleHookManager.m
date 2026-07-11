@@ -3,36 +3,29 @@
 #import "UCAESKeyValidator.h"
 #import "../Decrypt/DatabaseManager.h"
 #import "../Decrypt/fishhook.h"
-#import <sys/socket.h>
-#import <sys/uio.h>
-#import <netinet/in.h>
-#import <arpa/inet.h>
 #import <dlfcn.h>
-#import <objc/runtime.h>
 #import <pthread.h>
 
-// 目标域名关键字
-static NSString * const kMDTVHostKeyword = @"nzp1ve";
-
-// 响应体缓存阈值（MDTV JSON 响应通常只有几 KB）
+// 响应体缓存阈值
 static const NSUInteger kMaxResponseBuffer = 64 * 1024;  // 64KB
 
-// 同一个 fd 的去抖间隔（秒）
+// 扫描去抖间隔（秒）
 static const NSTimeInterval kScanDebounceInterval = 5.0;
 
-// 扫描锁：防止并发拖垮性能
+// 扫描锁
 static pthread_mutex_t gScanLock = PTHREAD_MUTEX_INITIALIZER;
 static NSTimeInterval gLastScanTime = 0;
 static BOOL gIsScanning = NO;
 
-// 原函数指针
-static int (*orig_connect)(int, const struct sockaddr *, socklen_t) = NULL;
-static ssize_t (*orig_recvmsg)(int, struct msghdr *, int) = NULL;
-static ssize_t (*orig_recv)(int, void *, size_t, int) = NULL;
+// ─── SSL_read hook ───
+// BoringSSL 的 SSL_read 返回解密后的明文数据。
+// POSIX recv/recvmsg 在 HTTPS 场景下返回的是 TLS 密文，JSON 解析永远匹配不到。
+// 因此改用 SSL_read，在 TLS 解密后直接获取 HTTP 明文。
+static int (*orig_SSL_read)(void *ssl, void *buf, int num) = NULL;
 
-// 每个 fd 的响应体缓冲（只保留最近活跃的 fd，防止泄漏）
-static NSMutableDictionary<NSNumber *, NSMutableData *> *gResponseBuffers = nil;
-static NSMutableDictionary<NSNumber *, NSDate *> *gFdLastActivity = nil;
+// 每个 SSL 连接的响应体缓冲（key = NSValue wrapping SSL*）
+static NSMutableDictionary<NSValue *, NSMutableData *> *gResponseBuffers = nil;
+static NSMutableDictionary<NSValue *, NSDate *> *gSSLActivity = nil;
 static dispatch_queue_t gHookQueue = nil;
 static BOOL gHooksInstalled = NO;
 
@@ -45,7 +38,7 @@ static BOOL gHooksInstalled = NO;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         gResponseBuffers = [NSMutableDictionary dictionary];
-        gFdLastActivity = [NSMutableDictionary dictionary];
+        gSSLActivity = [NSMutableDictionary dictionary];
         gHookQueue = dispatch_queue_create("com.flex.pointycastle.hook", DISPATCH_QUEUE_SERIAL);
     });
 }
@@ -67,77 +60,41 @@ static BOOL gHooksInstalled = NO;
         return;
     }
 
+    // 使用 fishhook 拦截 BoringSSL 的 SSL_read
+    // SSL_read 返回 TLS 解密后的明文，比 POSIX socket hook 更适合 HTTPS 场景
     struct rebinding rebindings[] = {
-        {"connect",  hooked_connect,  (void **)&orig_connect},
-        {"recvmsg",  hooked_recvmsg,  (void **)&orig_recvmsg},
-        {"recv",     hooked_recv,     (void **)&orig_recv},
+        {"SSL_read", hooked_SSL_read, (void **)&orig_SSL_read},
     };
 
     int count = sizeof(rebindings) / sizeof(rebindings[0]);
     int result = rebind_symbols(rebindings, count);
 
     NSUInteger success = 0;
-    if (orig_connect) success++;
-    if (orig_recvmsg) success++;
-    if (orig_recv) success++;
+    if (orig_SSL_read) success++;
+
+    // 兜底：dlsym
+    if (!orig_SSL_read) {
+        orig_SSL_read = dlsym(RTLD_DEFAULT, "SSL_read");
+        if (orig_SSL_read) success++;
+    }
 
     NSString *log = [NSString stringWithFormat:
-                     @"[PointCastleHook] installed: %lu/%d (rebind=%d)",
+                     @"[PointCastleHook] SSL_read hook installed: %lu/%d (rebind=%d)",
                      (unsigned long)success, count, result];
     NSLog(@"%@", log);
     [[DatabaseManager sharedManager] insertLogText:log];
 
-    // 兜底：dlsym 获取原始函数
-    if (!orig_connect) orig_connect = dlsym(RTLD_DEFAULT, "connect");
-    if (!orig_recvmsg) orig_recvmsg = dlsym(RTLD_DEFAULT, "recvmsg");
-    if (!orig_recv)    orig_recv    = dlsym(RTLD_DEFAULT, "recv");
-
     gHooksInstalled = YES;
 }
 
-#pragma mark - Hook 函数
+#pragma mark - SSL_read Hook
 
-// connect 不再用于 fd 过滤，只保留日志记录
-static int hooked_connect(int sockfd, const struct sockaddr *addr, socklen_t addrlen) {
-    int ret = orig_connect ? orig_connect(sockfd, addr, addrlen) : connect(sockfd, addr, addrlen);
-
-    if (ret == 0 && addr && addrlen >= sizeof(struct sockaddr)) {
-        // 仅记录日志，不再用于 fd 过滤
-        // （endpointDescription 返回 IP 地址，无法匹配域名关键字）
-    }
-
-    return ret;
-}
-
-static ssize_t hooked_recvmsg(int sockfd, struct msghdr *msg, int flags) {
-    ssize_t ret = orig_recvmsg ? orig_recvmsg(sockfd, msg, flags) : recvmsg(sockfd, msg, flags);
-
-    if (ret > 0) {
-        NSData *chunk = nil;
-        if (msg && msg->msg_iov && msg->msg_iovlen > 0) {
-            NSMutableData *all = [NSMutableData data];
-            ssize_t remaining = ret;
-            for (int i = 0; i < msg->msg_iovlen && remaining > 0; i++) {
-                size_t take = MIN((size_t)remaining, msg->msg_iov[i].iov_len);
-                if (take > 0) {
-                    [all appendBytes:msg->msg_iov[i].iov_base length:take];
-                    remaining -= take;
-                }
-            }
-            chunk = all;
-        }
-        [UCPointCastleHookManager handleReceivedData:chunk ?: [NSData data] onFd:sockfd];
-    }
-
-    return ret;
-}
-
-static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
-    ssize_t ret = orig_recv ? orig_recv(sockfd, buf, len, flags) : recv(sockfd, buf, len, flags);
+static int hooked_SSL_read(void *ssl, void *buf, int num) {
+    int ret = orig_SSL_read ? orig_SSL_read(ssl, buf, num) : -1;
 
     if (ret > 0 && buf) {
         NSData *chunk = [NSData dataWithBytes:buf length:(NSUInteger)ret];
-        [UCPointCastleHookManager handleReceivedData:chunk onFd:sockfd];
+        [UCPointCastleHookManager handleSSLReadData:chunk sslContext:ssl];
     }
 
     return ret;
@@ -145,25 +102,21 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
 
 #pragma mark - 数据处理
 
-+ (void)handleReceivedData:(NSData *)data onFd:(int)fd {
++ (void)handleSSLReadData:(NSData *)data sslContext:(void *)ssl {
     if (!data || data.length == 0) return;
 
-    // 定期清理过期 fd 的 buffer
     [self cleanupStaleEntries];
 
-    // 快速预筛：丢弃明显是二进制流的数据（视频/图片/加密流）
-    // 阈值降低到 50% 以避免误判短 chunk
-    if (![self isLikelyTextData:data]) return;
-
-    // 累积缓冲
+    // SSL_read 返回的是解密后的明文（HTTP 响应），直接缓冲即可
+    // 不需要 isLikelyTextData 预筛，因为解密后就是文本
     dispatch_async(gHookQueue, ^{
-        NSNumber *fdKey = @(fd);
-        gFdLastActivity[fdKey] = [NSDate date];
+        NSValue *sslKey = [NSValue valueWithPointer:ssl];
+        gSSLActivity[sslKey] = [NSDate date];
 
-        NSMutableData *buffer = gResponseBuffers[fdKey];
+        NSMutableData *buffer = gResponseBuffers[sslKey];
         if (!buffer) {
             buffer = [NSMutableData data];
-            gResponseBuffers[fdKey] = buffer;
+            gResponseBuffers[sslKey] = buffer;
         }
         [buffer appendData:data];
 
@@ -171,17 +124,16 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
             buffer.length = kMaxResponseBuffer;
         }
 
-        [self tryParseResponseBuffer:buffer fd:fd];
+        [self tryParseResponseBuffer:buffer sslKey:sslKey];
     });
 }
 
-+ (void)tryParseResponseBuffer:(NSMutableData *)buffer fd:(int)fd {
++ (void)tryParseResponseBuffer:(NSMutableData *)buffer sslKey:(NSValue *)sslKey {
     if (buffer.length < 64) return;
 
-    NSNumber *fdKey = @(fd);
-    gFdLastActivity[fdKey] = [NSDate date];
+    gSSLActivity[sslKey] = [NSDate date];
 
-    // 只解析尾部 8KB，避免为大响应分配巨大 NSString
+    // 只解析尾部 8KB
     static const NSUInteger kParseWindowSize = 8 * 1024;
     NSUInteger parseLen = MIN(buffer.length, kParseWindowSize);
     NSData *tailData = [buffer subdataWithRange:NSMakeRange(buffer.length - parseLen, parseLen)];
@@ -212,8 +164,8 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
     // 清除缓冲避免重复触发
     [buffer setLength:0];
 
-    NSString *log = [NSString stringWithFormat:@"[PointCastleHook] captured response suffix=%@ dataLen=%lu fd=%d",
-                     suffix, (unsigned long)b64Data.length, fd];
+    NSString *log = [NSString stringWithFormat:@"[PointCastleHook] captured response suffix=%@ dataLen=%lu",
+                     suffix, (unsigned long)b64Data.length];
     NSLog(@"%@", log);
     [[DatabaseManager sharedManager] insertLogText:log];
 
@@ -348,21 +300,19 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
     }
 }
 
-#pragma mark - 过期 fd / buffer 清理
+#pragma mark - 过期 buffer 清理
 
 + (void)cleanupStaleEntries {
-    // 限制同时活跃的 fd 数量，防止 buffer 无限增长
     dispatch_async(gHookQueue, ^{
         NSDate *now = [NSDate date];
-        NSArray<NSNumber *> *keys = [gFdLastActivity allKeys];
+        NSArray<NSValue *> *keys = [gSSLActivity allKeys];
 
-        // 超过 30 秒不活动或总数超过 50 个 fd 时清理
         BOOL needCleanup = (keys.count > 50);
-        for (NSNumber *fdKey in keys) {
-            NSDate *last = gFdLastActivity[fdKey];
+        for (NSValue *sslKey in keys) {
+            NSDate *last = gSSLActivity[sslKey];
             if (needCleanup || !last || [now timeIntervalSinceDate:last] > 30.0) {
-                [gResponseBuffers removeObjectForKey:fdKey];
-                [gFdLastActivity removeObjectForKey:fdKey];
+                [gResponseBuffers removeObjectForKey:sslKey];
+                [gSSLActivity removeObjectForKey:sslKey];
             }
         }
     });
@@ -372,46 +322,11 @@ static ssize_t hooked_recv(int sockfd, void *buf, size_t len, int flags) {
 
 - (void)triggerValidationWithResponseBody:(NSData *)responseBody {
     if (!responseBody || responseBody.length == 0) return;
-    [UCPointCastleHookManager handleReceivedData:responseBody onFd:-1];
+    // 直接用 -1 的 fd，走旧逻辑（保留兼容性，现在已废弃 fd 过滤）
+    [UCPointCastleHookManager handleSSLReadData:responseBody sslContext:(void *)0x1];
 }
 
 #pragma mark - 工具方法
-
-+ (BOOL)isLikelyTextData:(NSData *)data {
-    if (!data || data.length == 0) return NO;
-
-    const uint8_t *bytes = (const uint8_t *)data.bytes;
-    NSUInteger sampleLen = MIN(data.length, (NSUInteger)512);
-    NSUInteger printable = 0;
-
-    for (NSUInteger i = 0; i < sampleLen; i++) {
-        uint8_t c = bytes[i];
-        if ((c >= 0x20 && c <= 0x7E) || c == '\r' || c == '\n' || c == '\t') {
-            printable++;
-        }
-    }
-
-    // 降低到 50%：HTTP/2 响应开头可能包含少量二进制帧头
-    return (printable * 100 / sampleLen) >= 50;
-}
-
-+ (nullable NSString *)endpointDescription:(const struct sockaddr *)addr {
-    if (!addr) return nil;
-
-    if (addr->sa_family == AF_INET) {
-        struct sockaddr_in *sin = (struct sockaddr_in *)addr;
-        char ip[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof(ip));
-        return [NSString stringWithFormat:@"%s:%d", ip, ntohs(sin->sin_port)];
-    }
-    if (addr->sa_family == AF_INET6) {
-        struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)addr;
-        char ip[INET6_ADDRSTRLEN];
-        inet_ntop(AF_INET6, &sin6->sin6_addr, ip, sizeof(ip));
-        return [NSString stringWithFormat:@"[%s]:%d", ip, ntohs(sin6->sin6_port)];
-    }
-    return nil;
-}
 
 + (NSString *)hexStringFromData:(NSData *)data {
     if (!data || data.length == 0) return @"";
