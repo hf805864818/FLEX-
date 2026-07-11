@@ -4,6 +4,7 @@
 #import <dlfcn.h>
 #import "DatabaseManager.h"
 #import "ScriptDecode.h"
+#import "../PointCastleHook/UCPointCastleHookManager.h"
 
 extern NSString *CurrentBundleID(void);
 extern NSString *HexStringFromBytes(const void *bytes, size_t length);
@@ -303,6 +304,10 @@ static void SaveURLResponse(NSURLRequest *request,
         @autoreleasepool {
             NSString *contentEncoding = headers[@"Content-Encoding"] ?: headers[@"content-encoding"];
             NSData *displayBody = CaptureDecompressBody(capturedBody, contentEncoding);
+
+            // PointCastle: 检测 MDTV {"suffix":"...","data":"..."} 响应格式
+            [UCPointCastleHookManager handleDecryptedResponse:displayBody];
+
             NSString *decompressNote = @"";
             if (displayBody != capturedBody && displayBody.length != capturedBody.length) {
                 decompressNote = [NSString stringWithFormat:@"[已解压: %@, %lu → %lu 字节]\n",

@@ -2,12 +2,7 @@
 #import "UCDartMemoryScanner.h"
 #import "UCAESKeyValidator.h"
 #import "../Decrypt/DatabaseManager.h"
-#import "../Decrypt/fishhook.h"
-#import <dlfcn.h>
 #import <pthread.h>
-
-// 响应体缓存阈值
-static const NSUInteger kMaxResponseBuffer = 64 * 1024;  // 64KB
 
 // 扫描去抖间隔（秒）
 static const NSTimeInterval kScanDebounceInterval = 5.0;
@@ -17,31 +12,10 @@ static pthread_mutex_t gScanLock = PTHREAD_MUTEX_INITIALIZER;
 static NSTimeInterval gLastScanTime = 0;
 static BOOL gIsScanning = NO;
 
-// ─── SSL_read hook ───
-// BoringSSL 的 SSL_read 返回解密后的明文数据。
-// POSIX recv/recvmsg 在 HTTPS 场景下返回的是 TLS 密文，JSON 解析永远匹配不到。
-// 因此改用 SSL_read，在 TLS 解密后直接获取 HTTP 明文。
-static int (*orig_SSL_read)(void *ssl, void *buf, int num) = NULL;
-
-// 每个 SSL 连接的响应体缓冲（key = NSValue wrapping SSL*）
-static NSMutableDictionary<NSValue *, NSMutableData *> *gResponseBuffers = nil;
-static NSMutableDictionary<NSValue *, NSDate *> *gSSLActivity = nil;
-static dispatch_queue_t gHookQueue = nil;
-static BOOL gHooksInstalled = NO;
-
 @interface UCPointCastleHookManager ()
 @end
 
 @implementation UCPointCastleHookManager
-
-+ (void)initialize {
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        gResponseBuffers = [NSMutableDictionary dictionary];
-        gSSLActivity = [NSMutableDictionary dictionary];
-        gHookQueue = dispatch_queue_create("com.flex.pointycastle.hook", DISPATCH_QUEUE_SERIAL);
-    });
-}
 
 + (instancetype)sharedManager {
     static UCPointCastleHookManager *instance = nil;
@@ -52,91 +26,25 @@ static BOOL gHooksInstalled = NO;
     return instance;
 }
 
-#pragma mark - 安装 Hooks
+#pragma mark - 安装 Hooks（保留兼容性）
 
 - (void)installHooks {
-    if (gHooksInstalled) {
-        NSLog(@"[PointCastleHook] hooks already installed, skipping");
-        return;
-    }
-
-    // 使用 fishhook 拦截 BoringSSL 的 SSL_read
-    // SSL_read 返回 TLS 解密后的明文，比 POSIX socket hook 更适合 HTTPS 场景
-    struct rebinding rebindings[] = {
-        {"SSL_read", hooked_SSL_read, (void **)&orig_SSL_read},
-    };
-
-    int count = sizeof(rebindings) / sizeof(rebindings[0]);
-    int result = rebind_symbols(rebindings, count);
-
-    NSUInteger success = 0;
-    if (orig_SSL_read) success++;
-
-    // 兜底：dlsym
-    if (!orig_SSL_read) {
-        orig_SSL_read = dlsym(RTLD_DEFAULT, "SSL_read");
-        if (orig_SSL_read) success++;
-    }
-
-    NSString *log = [NSString stringWithFormat:
-                     @"[PointCastleHook] SSL_read hook installed: %lu/%d (rebind=%d)",
-                     (unsigned long)success, count, result];
-    NSLog(@"%@", log);
-    [[DatabaseManager sharedManager] insertLogText:log];
-
-    gHooksInstalled = YES;
+    // 不再使用 SSL_read / socket hook。
+    // 真正的响应捕获由 URLCapture.m 的 NSURLSession hook 完成，
+    // 在 SaveURLResponse 中调用 +[UCPointCastleHookManager handleDecryptedResponse:]。
+    NSLog(@"[PointCastleHook] hooks registered (piggyback on URLCapture.m NSURLSession hooks)");
+    [[DatabaseManager sharedManager] insertLogText:@"[PointCastleHook] hooks registered (piggyback on URLCapture)"];
 }
 
-#pragma mark - SSL_read Hook
+#pragma mark - 由 URLCapture.m 调用的入口
 
-static int hooked_SSL_read(void *ssl, void *buf, int num) {
-    int ret = orig_SSL_read ? orig_SSL_read(ssl, buf, num) : -1;
++ (void)handleDecryptedResponse:(NSData *)body {
+    if (!body || body.length < 64) return;
 
-    if (ret > 0 && buf) {
-        NSData *chunk = [NSData dataWithBytes:buf length:(NSUInteger)ret];
-        [UCPointCastleHookManager handleSSLReadData:chunk sslContext:ssl];
-    }
-
-    return ret;
-}
-
-#pragma mark - 数据处理
-
-+ (void)handleSSLReadData:(NSData *)data sslContext:(void *)ssl {
-    if (!data || data.length == 0) return;
-
-    [self cleanupStaleEntries];
-
-    // SSL_read 返回的是解密后的明文（HTTP 响应），直接缓冲即可
-    // 不需要 isLikelyTextData 预筛，因为解密后就是文本
-    dispatch_async(gHookQueue, ^{
-        NSValue *sslKey = [NSValue valueWithPointer:ssl];
-        gSSLActivity[sslKey] = [NSDate date];
-
-        NSMutableData *buffer = gResponseBuffers[sslKey];
-        if (!buffer) {
-            buffer = [NSMutableData data];
-            gResponseBuffers[sslKey] = buffer;
-        }
-        [buffer appendData:data];
-
-        if (buffer.length > kMaxResponseBuffer) {
-            buffer.length = kMaxResponseBuffer;
-        }
-
-        [self tryParseResponseBuffer:buffer sslKey:sslKey];
-    });
-}
-
-+ (void)tryParseResponseBuffer:(NSMutableData *)buffer sslKey:(NSValue *)sslKey {
-    if (buffer.length < 64) return;
-
-    gSSLActivity[sslKey] = [NSDate date];
-
-    // 只解析尾部 8KB
+    // 只解析尾部 8KB，避免为大响应分配巨大 NSString
     static const NSUInteger kParseWindowSize = 8 * 1024;
-    NSUInteger parseLen = MIN(buffer.length, kParseWindowSize);
-    NSData *tailData = [buffer subdataWithRange:NSMakeRange(buffer.length - parseLen, parseLen)];
+    NSUInteger parseLen = MIN(body.length, kParseWindowSize);
+    NSData *tailData = [body subdataWithRange:NSMakeRange(body.length - parseLen, parseLen)];
 
     NSString *text = [[NSString alloc] initWithData:tailData encoding:NSUTF8StringEncoding];
     if (!text) return;
@@ -160,9 +68,6 @@ static int hooked_SSL_read(void *ssl, void *buf, int num) {
                                         searchRange:NSMakeRange(dataSearchStart, dataSearchLen)];
 
     if (!suffix || suffix.length != 6 || !b64Data || b64Data.length < 16) return;
-
-    // 清除缓冲避免重复触发
-    [buffer setLength:0];
 
     NSString *log = [NSString stringWithFormat:@"[PointCastleHook] captured response suffix=%@ dataLen=%lu",
                      suffix, (unsigned long)b64Data.length];
@@ -300,30 +205,11 @@ static int hooked_SSL_read(void *ssl, void *buf, int num) {
     }
 }
 
-#pragma mark - 过期 buffer 清理
-
-+ (void)cleanupStaleEntries {
-    dispatch_async(gHookQueue, ^{
-        NSDate *now = [NSDate date];
-        NSArray<NSValue *> *keys = [gSSLActivity allKeys];
-
-        BOOL needCleanup = (keys.count > 50);
-        for (NSValue *sslKey in keys) {
-            NSDate *last = gSSLActivity[sslKey];
-            if (needCleanup || !last || [now timeIntervalSinceDate:last] > 30.0) {
-                [gResponseBuffers removeObjectForKey:sslKey];
-                [gSSLActivity removeObjectForKey:sslKey];
-            }
-        }
-    });
-}
-
 #pragma mark - 手动触发（调试用）
 
 - (void)triggerValidationWithResponseBody:(NSData *)responseBody {
     if (!responseBody || responseBody.length == 0) return;
-    // 直接用 -1 的 fd，走旧逻辑（保留兼容性，现在已废弃 fd 过滤）
-    [UCPointCastleHookManager handleSSLReadData:responseBody sslContext:(void *)0x1];
+    [UCPointCastleHookManager handleDecryptedResponse:responseBody];
 }
 
 #pragma mark - 工具方法
