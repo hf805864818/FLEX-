@@ -5,6 +5,59 @@
 #import <mach-o/getsect.h>
 #import <malloc/malloc.h>
 #import <CommonCrypto/CommonDigest.h>
+#import <setjmp.h>
+#import <signal.h>
+#import <pthread.h>
+
+// ─── 堆扫描 SIGBUS/SIGSEGV 保护 ───
+// 堆扫描可能遇到 MALLOC guard page 等不可读映射，直接访问会触发 SIGBUS。
+// 这里用 sigsetjmp/siglongjmp + 信号处理函数做“安全气囊”：遇到访问冲突时
+// 跳过当前 region 继续扫描，而不是让 App 崩溃。
+static pthread_key_t g_scan_jmpbuf_key;
+static dispatch_once_t g_scan_key_once;
+static struct sigaction g_old_bus_action;
+static struct sigaction g_old_segv_action;
+static volatile sig_atomic_t g_scan_handler_installed = 0;
+
+static void ScanMemorySignalHandler(int sig, siginfo_t *info, void *ctx) {
+    sigjmp_buf *jb = (sigjmp_buf *)pthread_getspecific(g_scan_jmpbuf_key);
+    if (jb) {
+        siglongjmp(*jb, sig);
+    }
+    // 没有当前线程的恢复点，恢复旧 handler 并重新触发，让系统处理
+    if (sig == SIGBUS) {
+        sigaction(SIGBUS, &g_old_bus_action, NULL);
+        raise(SIGBUS);
+    } else {
+        sigaction(SIGSEGV, &g_old_segv_action, NULL);
+        raise(SIGSEGV);
+    }
+}
+
+static void InitScanJmpbufKey(void) {
+    pthread_key_create(&g_scan_jmpbuf_key, free);
+}
+
+static void InstallScanSignalHandlers(void) {
+    if (g_scan_handler_installed) return;
+    g_scan_handler_installed = 1;
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = ScanMemorySignalHandler;
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+
+    sigaction(SIGBUS, &sa, &g_old_bus_action);
+    sigaction(SIGSEGV, &sa, &g_old_segv_action);
+}
+
+static void UninstallScanSignalHandlers(void) {
+    if (!g_scan_handler_installed) return;
+    g_scan_handler_installed = 0;
+    sigaction(SIGBUS, &g_old_bus_action, NULL);
+    sigaction(SIGSEGV, &g_old_segv_action, NULL);
+}
 
 // ─── 最大扫描大小限制（防止 OOM）───
 static const NSUInteger kMaxSectionScanSize = 10 * 1024 * 1024;  // 每个 Mach-O 段最大扫 10MB
@@ -403,6 +456,19 @@ static void ScanHeapMemory(void) {
         @try {
             recordScan(@"堆扫描", @"开始扫描堆内存...");
 
+            // 初始化线程局部恢复点
+            dispatch_once(&g_scan_key_once, ^{
+                InitScanJmpbufKey();
+            });
+            sigjmp_buf *jb = (sigjmp_buf *)pthread_getspecific(g_scan_jmpbuf_key);
+            if (!jb) {
+                jb = (sigjmp_buf *)malloc(sizeof(sigjmp_buf));
+                pthread_setspecific(g_scan_jmpbuf_key, jb);
+            }
+
+            // 安装 SIGBUS/SIGSEGV 保护：访问 guard page 时安全跳回而不是崩溃
+            InstallScanSignalHandlers();
+
             task_t task = mach_task_self();
             vm_address_t address = 0;
             vm_size_t regionSize = 0;
@@ -434,6 +500,15 @@ static void ScanHeapMemory(void) {
                 }
 
                 if (regionSize == 0 || regionSize > kMaxHeapScanBytes) {
+                    address += regionSize;
+                    continue;
+                }
+
+                // 为当前区域设置恢复点：访问 guard page 时安全跳过
+                int fault = sigsetjmp(*jb, 1);
+                if (fault != 0) {
+                    recordScan(@"堆扫描", [NSString stringWithFormat:@"区域访问冲突 (signal %d) 于 0x%lx，跳过",
+                                            fault, (unsigned long)address]);
                     address += regionSize;
                     continue;
                 }
@@ -491,6 +566,8 @@ static void ScanHeapMemory(void) {
                 (unsigned long)totalBlocks, (unsigned long)totalScanned]);
         } @catch (NSException *e) {
             recordScan(@"堆扫描异常", [NSString stringWithFormat:@"%@", e.reason]);
+        } @finally {
+            UninstallScanSignalHandlers();
         }
     }
 }
@@ -596,8 +673,7 @@ static BOOL IsPriorityLib(const char *name) {
         NSLog(@"[MemoryScan] 开始异步深度扫描...");
 
         [self scanAllDylibs];
-        // [self scanHeapMemory]; // 已临时禁用：vm_region 堆扫描会误触 MALLOC guard page 导致 SIGBUS
-        // PointCastle 使用独立的 UCDartMemoryScanner 进行 Dart 堆扫描
+        [self scanHeapMemory]; // 已加 SIGBUS/SIGSEGV 保护，遇到 guard page 会跳过继续扫
 
         NSLog(@"[MemoryScan] 异步深度扫描完成 (本帧记录 %lu 条)", (unsigned long)gResultsCount);
     });
