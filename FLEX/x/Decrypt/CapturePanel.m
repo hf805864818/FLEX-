@@ -31,6 +31,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     CaptureTabMemoryScan,
     CaptureTabFuncIntercept,
     CaptureTabSocket,       // ★ 新增：Socket捕获数据
+    CaptureTabPointCastle,  // ★ 新增：PointCastle 密钥捕获
 };
 
 #pragma mark - 功能开关项
@@ -298,6 +299,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             [CaptureSwitchItem itemWithTitle:@"RSA 签名捕获" key:@"rsa_sign" desc:@"记录 RSA 签名操作" default:NO],
             [CaptureSwitchItem itemWithTitle:@"动态Hook" key:@"dynamic_hook_enabled" desc:@"启用运行时动态方法Hook" default:NO],
             [CaptureSwitchItem itemWithTitle:@"函数拦截" key:@"func_intercept_enabled" desc:@"启用敏感函数调用拦截" default:NO],
+            [CaptureSwitchItem itemWithTitle:@"PointCastle Hook" key:@"pointycastle_hook_enabled" desc:@"捕获 Flutter / pointycastle AES 密钥" default:NO],
         ];
     }
     return self;
@@ -420,6 +422,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             [db clearTable:@"dynamic_hook"];
             [db clearTable:@"memory_scan"];
             [db clearTable:@"func_intercept"];
+            [db clearTable:@"pointycastle_keys"];
             [db clearTable:@"yunxingrizhi"];
             
             [self.tableView reloadData];
@@ -819,7 +822,38 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 @end
 
-#pragma mark - Socket捕获列表
+#pragma mark - PointCastle 密钥列表
+
+@interface PointCastleListVC : CaptureListViewController
+@end
+
+@implementation PointCastleListVC
+
+- (instancetype)init {
+    return [self initWithTableName:@"pointycastle_keys"
+                       scopeTitles:@[@"全部", @"AES-CBC", @"AES-ECB", @"AES-CFB", @"AES-CTR"]
+                         tintColor:[UIColor colorWithRed:0.9 green:0.3 blue:0.5 alpha:1.0]];
+}
+
+- (BOOL)matchesScope:(NSInteger)scope text:(NSString *)text {
+    NSString *low = text.lowercaseString;
+    switch (scope) {
+        case 1: return [low containsString:@"mode=cbc"];
+        case 2: return [low containsString:@"mode=ecb"];
+        case 3: return [low containsString:@"mode=cfb"];
+        case 4: return [low containsString:@"mode=ctr"];
+        default: return YES;
+    }
+}
+
+- (UIViewController *)detailViewControllerForItem:(NSDictionary *)item {
+    NSString *text = item[@"longText"] ?: @"";
+    return [[CaptureDetailViewController alloc] initWithText:text title:@"PointCastle 密钥"];
+}
+
+@end
+
+#pragma mark - Socket捕获列表实现
 
 @interface SocketCaptureListVC : CaptureListViewController
 @end
@@ -1053,8 +1087,9 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     MemoryScanListVC *memVC = [[MemoryScanListVC alloc] init];
     FuncInterceptListVC *interceptVC = [[FuncInterceptListVC alloc] init];
     SocketCaptureListVC *socketVC = [[SocketCaptureListVC alloc] init];   // ★ 新增
+    PointCastleListVC *pointCastleVC = [[PointCastleListVC alloc] init];  // ★ 新增
 
-    _viewControllers = @[networkVC, decryptVC, keyVC, cryptoVC, hookVC, memVC, interceptVC, socketVC];
+    _viewControllers = @[networkVC, decryptVC, keyVC, cryptoVC, hookVC, memVC, interceptVC, socketVC, pointCastleVC];
     _currentIndex = 0;
 
     _pageVC = [[UIPageViewController alloc]
@@ -1138,7 +1173,8 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     DatabaseManager *db = [DatabaseManager sharedManager];
     
     NSArray *allSwitches = @[@"zongkaiguan", @"zhaiyaokaiguan", @"jiamisuanfakaiguan",
-                              @"hanmiyaokaiguan", @"rsa_encrypt", @"rsa_decrypt", @"rsa_sign"];
+                              @"hanmiyaokaiguan", @"rsa_encrypt", @"rsa_decrypt", @"rsa_sign",
+                              @"pointycastle_hook_enabled"];
     
     for (NSString *key in allSwitches) {
         [db setSwitch:key bundleID:bundleID value:enable];
@@ -1328,7 +1364,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
                 [[DatabaseManager sharedManager] clearTable:@"url_responses"];
                 SocketCaptureListVC *vc = self.viewControllers[CaptureTabSocket];
                 [vc reloadData];
-                
+
                 [[NSNotificationCenter defaultCenter]
                     postNotificationName:CaptureDataUpdatedNotification
                     object:nil
@@ -1336,8 +1372,23 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             };
             break;
         }
+        case CaptureTabPointCastle: {
+            title = @"清除PointCastle密钥";
+            msg = @"确定清除所有 pointycastle 密钥记录？";
+            action = ^{
+                [[DatabaseManager sharedManager] clearTable:@"pointycastle_keys"];
+                PointCastleListVC *vc = self.viewControllers[CaptureTabPointCastle];
+                [vc reloadData];
+
+                [[NSNotificationCenter defaultCenter]
+                    postNotificationName:CaptureDataUpdatedNotification
+                    object:nil
+                    userInfo:@{CaptureDataUpdatedTableKey: @"pointycastle_keys"}];
+            };
+            break;
+        }
     }
-    
+
     if (!title) return;
     
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title message:msg preferredStyle:UIAlertControllerStyleAlert];
@@ -1386,7 +1437,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 }
 
 - (void)setupScrollableTabBar {
-    NSArray *titles = @[@"网络", @"解密", @"密钥", @"算法", @"动态Hook", @"内存扫描", @"函数拦截", @"Socket"];
+    NSArray *titles = @[@"网络", @"解密", @"密钥", @"算法", @"动态Hook", @"内存扫描", @"函数拦截", @"Socket", @"PointCastle"];
     CGFloat tabH = 30.0;
     UIColor *normalColor = FLEXColor.deemphasizedTextColor;
     UIColor *selectedColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0];

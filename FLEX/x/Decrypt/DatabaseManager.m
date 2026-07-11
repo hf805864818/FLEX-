@@ -235,7 +235,7 @@
 
 - (NSArray<NSDictionary *> *)queryPointCastleKeysForBundleID:(NSString *)bundleID limit:(NSInteger)limit {
     if (!bundleID) return @[];
-    if (limit <= 0) limit = 100;
+    if (limit <= 0) limit = 1000;
 
     __block NSMutableArray *results = [NSMutableArray array];
     dispatch_sync(self.dbQueue, ^{
@@ -249,13 +249,26 @@
             int colCount = sqlite3_column_count(stmt);
             while (sqlite3_step(stmt) == SQLITE_ROW) {
                 NSMutableDictionary *row = [NSMutableDictionary dictionary];
+                NSString *keyHex = nil;
+                NSString *detail = nil;
+                NSString *timestamp = nil;
                 for (int i = 0; i < colCount; i++) {
                     const char *colName = sqlite3_column_name(stmt, i);
                     const unsigned char *text = sqlite3_column_text(stmt, i);
                     if (colName && text) {
-                        row[@(colName)] = [NSString stringWithUTF8String:(const char *)text];
+                        NSString *value = [NSString stringWithUTF8String:(const char *)text];
+                        row[@(colName)] = value;
+                        if (strcmp(colName, "keyHex") == 0) keyHex = value;
+                        else if (strcmp(colName, "detail") == 0) detail = value;
+                        else if (strcmp(colName, "timestamp") == 0) timestamp = value;
                     }
                 }
+                // 合成 longText，兼容通用列表/导出逻辑
+                NSString *longText = [NSString stringWithFormat:@"KEY=%@\nTIME=%@\n%@",
+                                      keyHex ?: @"(unknown)",
+                                      timestamp ?: @"",
+                                      detail ?: @""];
+                row[@"longText"] = longText;
                 [results addObject:row];
             }
         }
