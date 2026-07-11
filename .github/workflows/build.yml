@@ -26,8 +26,6 @@ jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 30
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout
@@ -106,17 +104,20 @@ jobs:
 
           # 检查是否已有版本号宏，如果没有则插入
           if ! grep -q "FLEXXX_VERSION_MAJOR" "$FILE"; then
-            # 将版本宏写入临时文件，再用 sed 插入到指定位置
-            printf '%s\n' \
-              "// FLEX++ 版本号 (由GitHub Actions自动更新)" \
-              "#define FLEXXX_VERSION_MAJOR $MAJOR" \
-              "#define FLEXXX_VERSION_MINOR $MINOR" \
-              "#define FLEXXX_VERSION_PATCH $PATCH" \
-              "#define FLEXXX_VERSION_BUILD $BUILD" \
-              "#define FLEXXX_VERSION_STRING [NSString stringWithFormat:@\"v%d.%d.%d-%d\", FLEXXX_VERSION_MAJOR, FLEXXX_VERSION_MINOR, FLEXXX_VERSION_PATCH, FLEXXX_VERSION_BUILD]" \
-              > /tmp/version_macro.h
-            LINE=$(grep -n '#import "FLEXGlobalsSection.h"' "$FILE" | head -1 | cut -d: -f1)
-            sed -i '' "${LINE}r /tmp/version_macro.h" "$FILE"
+            # 用 awk 在 #import "FLEXGlobalsSection.h" 之后插入版本号宏
+            awk -v m="$MAJOR" -v n="$MINOR" -v p="$PATCH" -v b="$BUILD" '
+              /^#import "FLEXGlobalsSection.h"$/ {
+                print
+                print "// FLEX++ 版本号 (由GitHub Actions自动更新)"
+                print "#define FLEXXX_VERSION_MAJOR " m
+                print "#define FLEXXX_VERSION_MINOR " n
+                print "#define FLEXXX_VERSION_PATCH " p
+                print "#define FLEXXX_VERSION_BUILD " b
+                print "#define FLEXXX_VERSION_STRING [NSString stringWithFormat:@\"v%d.%d.%d-%d\", FLEXXX_VERSION_MAJOR, FLEXXX_VERSION_MINOR, FLEXXX_VERSION_PATCH, FLEXXX_VERSION_BUILD]"
+                next
+              }
+              {print}
+            ' "$FILE" > "${FILE}.tmp" && mv "${FILE}.tmp" "$FILE"
           else
             # 已有宏定义，只更新数值
             sed -i '' "s/#define FLEXXX_VERSION_MAJOR [0-9]*/#define FLEXXX_VERSION_MAJOR $MAJOR/" "$FILE"
@@ -147,7 +148,6 @@ jobs:
       # ============ 4. 编译 ============
       - name: Build FLEX++.dylib
         run: |
-          set -o pipefail
           export THEOS=$HOME/theos
           export THEOS_PACKAGE_SCHEME=rootless
           make clean
