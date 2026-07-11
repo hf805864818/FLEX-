@@ -638,19 +638,9 @@ static BOOL IsPriorityLib(const char *name) {
 }
 
 - (void)startScan {
-    if (self.isScanning) return;
-    self.isScanning = YES;
-    self.scanCount = 0;
-
-    // 每 15 秒自动扫描一次，共 8 次（2 分钟内覆盖 App 运行周期）
-    self.scanTimer = [NSTimer scheduledTimerWithTimeInterval:15.0
-                                                      target:self
-                                                    selector:@selector(performMemoryScan)
-                                                    userInfo:nil
-                                                     repeats:YES];
-    [self performMemoryScan];
-
-    NSLog(@"[MemoryScan] 增强版内存扫描已启动");
+    // 已彻底停用：通用内存扫描在 iOS 17 上会访问 MALLOC guard page 触发 SIGBUS，
+    // 在找到安全的只读扫描方案前不再自动运行。PointCastle 使用独立扫描器。
+    NSLog(@"[MemoryScan] 通用内存扫描已停用（稳定性原因）");
 }
 
 - (void)stopScan {
