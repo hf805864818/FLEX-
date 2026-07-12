@@ -13,90 +13,132 @@ static pthread_mutex_t gScanLock = PTHREAD_MUTEX_INITIALIZER;
 static NSTimeInterval gLastScanTime = 0;
 static BOOL gIsScanning = NO;
 
-// ─── 自定义 NSURLProtocol ───
-// 直接注册一个 NSURLProtocol 子类，拦截所有 HTTP/HTTPS 响应，
-// 不依赖 URLCapture.m 的 NSURLSession hook（Flutter 的 dart:io
-// 在 iOS 上的 NSURLSession 用法可能没被 URLCapture.m 覆盖到）。
-//
-// 注意：这个 protocol 只"观察"响应，不修改也不拦截，
-// 请求仍然由原来的 NSURLSession/NSURLConnection 处理。
-//
-// 实现方式：用一个临时的 NSURLSessionDataTask 来获取响应数据，
-// 然后调用 client 回传。这样既能拿到响应明文，又不改变行为。
+// ============================================================
+//  Delegate 代理 — 在 NSURLSession 和原始 delegate 之间插入
+//  拦截 didReceiveData / didCompleteWithError 获取明文响应
+//  其他所有 delegate 方法透明转发给原始 delegate
+// ============================================================
 
-@interface UCPointCastleURLProtocol : NSURLProtocol <NSURLSessionDataDelegate>
-@property (nonatomic, strong) NSURLSessionDataTask *dataTask;
-@property (nonatomic, strong) NSMutableData *responseData;
+@interface UCPointCastleDelegateProxy : NSObject <NSURLSessionDataDelegate, NSURLSessionTaskDelegate>
+@property (nonatomic, weak, readonly) id originalDelegate;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSMutableData *> *taskDataMap;
+@property (nonatomic, strong) NSLock *dataLock;
+- (instancetype)initWithOriginalDelegate:(id)delegate;
 @end
 
-@implementation UCPointCastleURLProtocol
+@implementation UCPointCastleDelegateProxy
 
-+ (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    // 只处理 http/https
-    NSString *scheme = request.URL.scheme.lowercaseString;
-    if (![scheme isEqualToString:@"http"] && ![scheme isEqualToString:@"https"]) {
-        return NO;
+- (instancetype)initWithOriginalDelegate:(id)delegate {
+    self = [super init];
+    if (self) {
+        _originalDelegate = delegate;
+        _taskDataMap = [NSMutableDictionary dictionary];
+        _dataLock = [[NSLock alloc] init];
     }
-    // 防止递归
-    if ([NSURLProtocol propertyForKey:@"UCPointCastleHandled" inRequest:request]) {
-        return NO;
+    return self;
+}
+
+/// 所有未直接实现的方法转发给原始 delegate
+- (id)forwardingTargetForSelector:(SEL)aSelector {
+    if ([self.originalDelegate respondsToSelector:aSelector]) {
+        return self.originalDelegate;
     }
-    return YES;
+    return nil;
 }
 
-+ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
-    return request;
+- (BOOL)respondsToSelector:(SEL)aSelector {
+    if (aSelector == @selector(URLSession:dataTask:didReceiveData:) ||
+        aSelector == @selector(URLSession:task:didCompleteWithError:)) {
+        return YES;
+    }
+    return [self.originalDelegate respondsToSelector:aSelector] || [super respondsToSelector:aSelector];
 }
 
-+ (BOOL)requestIsCacheEquivalent:(NSURLRequest *)a toRequest:(NSURLRequest *)b {
-    return [super requestIsCacheEquivalent:a toRequest:b];
+/// 拦截 didReceiveData — 累积响应数据
+- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(NSData *)data {
+    if (data.length > 0) {
+        [self.dataLock lock];
+        NSNumber *key = @(dataTask.taskIdentifier);
+        NSMutableData *accum = self.taskDataMap[key];
+        if (!accum) {
+            accum = [NSMutableData data];
+            self.taskDataMap[key] = accum;
+        }
+        // 限制单条响应最多 512KB，避免内存爆炸
+        if (accum.length < 512 * 1024) {
+            NSUInteger remain = 512 * 1024 - accum.length;
+            [accum appendData:[data subdataWithRange:NSMakeRange(0, MIN(remain, data.length))]];
+        }
+        [self.dataLock unlock];
+    }
+
+    // 转发给原始 delegate
+    if ([self.originalDelegate respondsToSelector:_cmd]) {
+        [self.originalDelegate URLSession:session dataTask:dataTask didReceiveData:data];
+    }
 }
 
-- (void)startLoading {
-    NSMutableURLRequest *mutableReq = [self.request mutableCopy];
-    [NSURLProtocol setProperty:@YES forKey:@"UCPointCastleHandled" inRequest:mutableReq];
+/// 拦截 didCompleteWithError — 响应完成，触发密钥检测
+- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
+    [self.dataLock lock];
+    NSNumber *key = @(task.taskIdentifier);
+    NSMutableData *accum = self.taskDataMap[key];
+    [self.taskDataMap removeObjectForKey:key];
+    [self.dataLock unlock];
 
-    self.responseData = [NSMutableData data];
+    // 只在成功且有数据时触发检测
+    if (!error && accum.length > 0) {
+        [UCPointCastleHookManager handleDecryptedResponse:accum];
+    }
 
-    // 用共享 session 发请求，走系统默认配置
-    NSURLSession *session = [NSURLSession sharedSession];
-    self.dataTask = [session dataTaskWithRequest:mutableReq
-                               completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
-        if (data) {
-            [self.responseData appendData:data];
-        }
-
-        // 检测 MDTV 响应
-        if (data.length > 0 && response) {
-            [UCPointCastleHookManager handleDecryptedResponse:data];
-        }
-
-        // 回传给 client
-        if (response) {
-            [self.client URLProtocol:self didReceiveResponse:response
-                   cacheStoragePolicy:NSURLCacheStorageNotAllowed];
-        }
-        if (data) {
-            [self.client URLProtocol:self didLoadData:data];
-        }
-        if (error) {
-            [self.client URLProtocol:self didFailWithError:error];
-        } else {
-            [self.client URLProtocolDidFinishLoading:self];
-        }
-    }];
-    [self.dataTask resume];
-}
-
-- (void)stopLoading {
-    [self.dataTask cancel];
-    self.dataTask = nil;
-    self.responseData = nil;
+    // 转发给原始 delegate
+    if ([self.originalDelegate respondsToSelector:_cmd]) {
+        [self.originalDelegate URLSession:session task:task didCompleteWithError:error];
+    }
 }
 
 @end
 
-// ─── 主管理器 ───
+// ============================================================
+//  保存原始 IMP（避免与 URLCapture.m 的 key 冲突，使用全局变量）
+// ============================================================
+
+static id (*gOriginalInitIMP)(id, SEL, NSURLSessionConfiguration *, id, NSOperationQueue *) = NULL;
+static NSURLSession *(*gOriginalSessionFactoryIMP)(id, SEL, NSURLSessionConfiguration *, id, NSOperationQueue *) = NULL;
+
+// ============================================================
+//  Hook 实现
+// ============================================================
+
+/// ── Hook 1: -[NSURLSession initWithConfiguration:delegate:delegateQueue:] ──
+/// 如果 Flutter 直接调用 init 方法（不走类方法），这里拦截
+static id UCPCHookedInitWithConfig(id self, SEL _cmd, NSURLSessionConfiguration *config,
+                                     id delegate, NSOperationQueue *queue) {
+    if (delegate && ![delegate isKindOfClass:[UCPointCastleDelegateProxy class]]) {
+        UCPointCastleDelegateProxy *proxy = [[UCPointCastleDelegateProxy alloc] initWithOriginalDelegate:delegate];
+        delegate = (id)proxy;
+    }
+
+    // 调用"原始"IMP — 可能是 URLCapture.m 的 hook，也可能是真正的原始实现
+    // 无论是哪种，我们的代理 delegate 都会被正确传递下去
+    return gOriginalInitIMP(self, _cmd, config, delegate, queue);
+}
+
+/// ── Hook 2: +[NSURLSession sessionWithConfiguration:delegate:delegateQueue:] ──
+/// 这是 NSURLSession 的工厂方法，Flutter dart:io 使用此方法创建 session
+static NSURLSession *UCPCHookedSessionFactory(id self, SEL _cmd, NSURLSessionConfiguration *config,
+                                                id delegate, NSOperationQueue *queue) {
+    if (delegate && ![delegate isKindOfClass:[UCPointCastleDelegateProxy class]]) {
+        UCPointCastleDelegateProxy *proxy = [[UCPointCastleDelegateProxy alloc] initWithOriginalDelegate:delegate];
+        delegate = (id)proxy;
+    }
+
+    return gOriginalSessionFactoryIMP(self, _cmd, config, delegate, queue);
+}
+
+// ============================================================
+//  主管理器
+// ============================================================
 
 @interface UCPointCastleHookManager ()
 @end
@@ -117,53 +159,35 @@ static BOOL gIsScanning = NO;
 - (void)installHooks {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        // 注册自定义 NSURLProtocol，拦截所有 HTTP/HTTPS 响应
-        [NSURLProtocol registerClass:[UCPointCastleURLProtocol class]];
+        Class sessionCls = [NSURLSession class];
 
-        // 同时修改 default 和 ephemeral session 配置，
-        // 确保 NSURLSession 也会经过我们的 protocol
-        Class configCls = [NSURLSessionConfiguration class];
-        SEL defaultSel = @selector(defaultSessionConfiguration);
-        SEL ephemeralSel = @selector(ephemeralSessionConfiguration);
-
-        Method defaultMethod = class_getClassMethod(configCls, defaultSel);
-        Method ephemeralMethod = class_getClassMethod(configCls, ephemeralSel);
-
-        if (defaultMethod) {
-            IMP originalImp = method_getImplementation(defaultMethod);
-            typedef NSURLSessionConfiguration *(*ConfigFunc)(id, SEL);
-            ConfigFunc original = (ConfigFunc)originalImp;
-
-            IMP newImp = imp_implementationWithBlock(^NSURLSessionConfiguration *(id self) {
-                NSURLSessionConfiguration *config = original(self, defaultSel);
-                NSMutableArray *protocols = [config.protocolClasses mutableCopy] ?: [NSMutableArray array];
-                if (![protocols containsObject:[UCPointCastleURLProtocol class]]) {
-                    [protocols insertObject:[UCPointCastleURLProtocol class] atIndex:0];
-                    config.protocolClasses = protocols;
-                }
-                return config;
-            });
-            method_setImplementation(defaultMethod, newImp);
+        // ─── Hook 1: 实例方法 initWithConfiguration:delegate:delegateQueue: ───
+        // 保存当前 IMP（可能是 URLCapture.m 的 hook，也可能是真正的原始实现），
+        // 然后替换为我们的实现。这样我们的 hook 会在 URLCapture 的 hook 之后运行，
+        // URLCapture 仍然能正常工作（它先收到原始 delegate，hook 其方法，
+        // 然后我们的 hook 把 delegate 换成代理后再调用 init）。
+        {
+            SEL sel = @selector(initWithConfiguration:delegate:delegateQueue:);
+            Method method = class_getInstanceMethod(sessionCls, sel);
+            if (method) {
+                gOriginalInitIMP = (id (*)(id, SEL, NSURLSessionConfiguration *, id, NSOperationQueue *))
+                    method_getImplementation(method);
+                method_setImplementation(method, (IMP)UCPCHookedInitWithConfig);
+            }
         }
 
-        if (ephemeralMethod) {
-            IMP originalImp = method_getImplementation(ephemeralMethod);
-            typedef NSURLSessionConfiguration *(*ConfigFunc)(id, SEL);
-            ConfigFunc original = (ConfigFunc)originalImp;
-
-            IMP newImp = imp_implementationWithBlock(^NSURLSessionConfiguration *(id self) {
-                NSURLSessionConfiguration *config = original(self, ephemeralSel);
-                NSMutableArray *protocols = [config.protocolClasses mutableCopy] ?: [NSMutableArray array];
-                if (![protocols containsObject:[UCPointCastleURLProtocol class]]) {
-                    [protocols insertObject:[UCPointCastleURLProtocol class] atIndex:0];
-                    config.protocolClasses = protocols;
-                }
-                return config;
-            });
-            method_setImplementation(ephemeralMethod, newImp);
+        // ─── Hook 2: 类方法 sessionWithConfiguration:delegate:delegateQueue: ───
+        {
+            SEL sel = @selector(sessionWithConfiguration:delegate:delegateQueue:);
+            Method method = class_getClassMethod(sessionCls, sel);
+            if (method) {
+                gOriginalSessionFactoryIMP = (NSURLSession *(*)(id, SEL, NSURLSessionConfiguration *, id, NSOperationQueue *))
+                    method_getImplementation(method);
+                method_setImplementation(method, (IMP)UCPCHookedSessionFactory);
+            }
         }
 
-        NSString *log = @"[PointCastleHook] NSURLProtocol hooks installed";
+        NSString *log = @"[PointCastleHook] Delegate proxy hooks installed (init + factory method)";
         NSLog(@"%@", log);
         [[DatabaseManager sharedManager] insertLogText:log];
     });
@@ -349,7 +373,7 @@ static BOOL gIsScanning = NO;
 
 + (NSString *)hexStringFromData:(NSData *)data {
     if (!data || data.length == 0) return @"";
-    const uint8_t *bytes = (const uint8_t *)data.bytes;
+    const uint8_t *bytes = data.bytes;
     NSMutableString *hex = [NSMutableString stringWithCapacity:data.length * 2];
     for (NSUInteger i = 0; i < data.length; i++) {
         [hex appendFormat:@"%02x", bytes[i]];
