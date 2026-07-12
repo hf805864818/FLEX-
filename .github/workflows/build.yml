@@ -150,6 +150,7 @@ jobs:
       # ============ 4. 编译 ============
       - name: Build FLEX++.dylib
         run: |
+          set -e
           export THEOS=$HOME/theos
           export THEOS_PACKAGE_SCHEME=rootless
           make clean
@@ -158,6 +159,7 @@ jobs:
       # ============ 5. 收集产物 ============
       - name: Collect build artifacts
         run: |
+          set -e
           mkdir -p artifacts
           # 复制.deb
           find . -name "*.deb" -exec cp {} artifacts/ \;
@@ -168,6 +170,11 @@ jobs:
           
           echo "构建产物:"
           ls -lh artifacts/
+          # 如果没有.deb或.dylib，则构建失败
+          if [ ! -f artifacts/*.deb ] && [ ! -f artifacts/*.dylib ]; then
+            echo "错误: 未找到 .deb 或 .dylib 产物"
+            exit 1
+          fi
 
       # ============ 6. 上传产物 ============
       - name: Upload .deb artifacts

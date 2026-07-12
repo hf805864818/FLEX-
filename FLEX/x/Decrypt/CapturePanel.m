@@ -16,6 +16,7 @@
 #import "UCExportManager.h"
 #import "../PointCastleHook/UCPointCastleHookManager.h"
 #import "../UCLog/UCAppLogViewController.h"
+#import "../UCLog/UCAppLogManager.h"
 
 #pragma mark - 通知名称定义
 
