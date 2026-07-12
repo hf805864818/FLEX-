@@ -15,6 +15,7 @@
 #import "UCDecryptTool.h"
 #import "UCExportManager.h"
 #import "../PointCastleHook/UCPointCastleHookManager.h"
+#import "../UCLog/UCAppLogViewController.h"
 
 #pragma mark - 通知名称定义
 
@@ -33,6 +34,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     CaptureTabFuncIntercept,
     CaptureTabSocket,       // ★ 新增：Socket捕获数据
     CaptureTabPointCastle,  // ★ 新增：PointCastle 密钥捕获
+    CaptureTabAppLog,       // ★ 新增：应用运行日志
 };
 
 #pragma mark - 功能开关项
@@ -1122,8 +1124,9 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     FuncInterceptListVC *interceptVC = [[FuncInterceptListVC alloc] init];
     SocketCaptureListVC *socketVC = [[SocketCaptureListVC alloc] init];   // ★ 新增
     PointCastleListVC *pointCastleVC = [[PointCastleListVC alloc] init];  // ★ 新增
+    UCAppLogViewController *appLogVC = [[UCAppLogViewController alloc] init];  // ★ 新增：运行日志
 
-    _viewControllers = @[networkVC, decryptVC, keyVC, cryptoVC, hookVC, memVC, interceptVC, socketVC, pointCastleVC];
+    _viewControllers = @[networkVC, decryptVC, keyVC, cryptoVC, hookVC, memVC, interceptVC, socketVC, pointCastleVC, appLogVC];
     _currentIndex = 0;
 
     _pageVC = [[UIPageViewController alloc]
@@ -1284,6 +1287,9 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
         if ([vc isKindOfClass:[CaptureListViewController class]]) {
             [(CaptureListViewController *)vc reloadData];
         }
+        if ([vc isKindOfClass:[UCAppLogViewController class]]) {
+            [(UCAppLogViewController *)vc reloadData];
+        }
     }
 }
 
@@ -1421,6 +1427,16 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             };
             break;
         }
+        case CaptureTabAppLog: {
+            title = @"清除运行日志";
+            msg = @"确定清除所有运行日志？";
+            action = ^{
+                [[UCAppLogManager sharedManager] clearAllLogs];
+                UCAppLogViewController *vc = self.viewControllers[CaptureTabAppLog];
+                [vc reloadData];
+            };
+            break;
+        }
     }
 
     if (!title) return;
@@ -1436,6 +1452,11 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 - (void)exportTapped {
     if (self.currentIndex == CaptureTabNetwork) {
         [self handleNetworkExport];
+        return;
+    }
+
+    if (self.currentIndex == CaptureTabAppLog) {
+        [[UCAppLogManager sharedManager] exportAllLogsFromViewController:self completion:nil];
         return;
     }
 
@@ -1471,7 +1492,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 }
 
 - (void)setupScrollableTabBar {
-    NSArray *titles = @[@"网络", @"解密", @"密钥", @"算法", @"动态Hook", @"内存扫描", @"函数拦截", @"Socket", @"PointCastle"];
+    NSArray *titles = @[@"网络", @"解密", @"密钥", @"算法", @"动态Hook", @"内存扫描", @"函数拦截", @"Socket", @"PointCastle", @"日志"];
     CGFloat tabH = 30.0;
     UIColor *normalColor = FLEXColor.deemphasizedTextColor;
     UIColor *selectedColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0];

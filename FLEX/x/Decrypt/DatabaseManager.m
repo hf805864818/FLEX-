@@ -415,6 +415,65 @@
     return results;
 }
 
+#pragma mark - 运行日志管理
+
+- (NSArray<NSDictionary *> *)queryLogRecords:(NSInteger)limit {
+    if (limit <= 0) limit = 1000;
+
+    __block NSMutableArray *results = [NSMutableArray array];
+    dispatch_sync(self.dbQueue, ^{
+        if (![self openDatabase]) return;
+
+        const char *sql = "SELECT id, logText, timestamp FROM yunxingrizhi ORDER BY id DESC LIMIT ?";
+        sqlite3_stmt *stmt = NULL;
+        if (sqlite3_prepare_v2(self.db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, (int)limit);
+            while (sqlite3_step(stmt) == SQLITE_ROW) {
+                NSMutableDictionary *row = [NSMutableDictionary dictionary];
+                row[@"id"] = @(sqlite3_column_int(stmt, 0));
+                const unsigned char *text = sqlite3_column_text(stmt, 1);
+                row[@"logText"] = text ? [NSString stringWithUTF8String:(const char *)text] : @"";
+                const unsigned char *ts = sqlite3_column_text(stmt, 2);
+                row[@"timestamp"] = ts ? [NSString stringWithUTF8String:(const char *)ts] : @"";
+                [results addObject:row];
+            }
+        }
+        sqlite3_finalize(stmt);
+    });
+    return results;
+}
+
+- (void)deleteLogById:(NSInteger)logId {
+    dispatch_async(self.dbQueue, ^{
+        if (![self openDatabase]) return;
+        const char *sql = "DELETE FROM yunxingrizhi WHERE id = ?";
+        sqlite3_stmt *stmt = NULL;
+        if (sqlite3_prepare_v2(self.db, sql, -1, &stmt, NULL) == SQLITE_OK) {
+            sqlite3_bind_int(stmt, 1, (int)logId);
+            sqlite3_step(stmt);
+        }
+        sqlite3_finalize(stmt);
+    });
+}
+
+- (void)cleanupLogsOlderThanDays:(NSInteger)days {
+    if (days <= 0) return;
+    dispatch_async(self.dbQueue, ^{
+        if (![self openDatabase]) return;
+        NSString *sql = [NSString stringWithFormat:@"DELETE FROM yunxingrizhi WHERE timestamp < datetime('now', '-%ld days')", (long)days];
+        sqlite3_exec(self.db, sql.UTF8String, NULL, NULL, NULL);
+    });
+}
+
+- (void)cleanupLogsMaxCount:(NSInteger)maxCount {
+    if (maxCount <= 0) return;
+    dispatch_async(self.dbQueue, ^{
+        if (![self openDatabase]) return;
+        NSString *sql = [NSString stringWithFormat:@"DELETE FROM yunxingrizhi WHERE id NOT IN (SELECT id FROM yunxingrizhi ORDER BY id DESC LIMIT %ld)", (long)maxCount];
+        sqlite3_exec(self.db, sql.UTF8String, NULL, NULL, NULL);
+    });
+}
+
 - (void)dealloc {
     [self closeDatabase];
 }

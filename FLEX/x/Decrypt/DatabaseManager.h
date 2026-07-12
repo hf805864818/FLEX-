@@ -29,6 +29,12 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)insertLogText:(NSString *)logText;
 - (NSArray<NSString *> *)queryLogs:(NSInteger)limit;
 
+// MARK: - 运行日志管理
+- (NSArray<NSDictionary *> *)queryLogRecords:(NSInteger)limit;
+- (void)deleteLogById:(NSInteger)logId;
+- (void)cleanupLogsOlderThanDays:(NSInteger)days;
+- (void)cleanupLogsMaxCount:(NSInteger)maxCount;
+
 @end
 
 NS_ASSUME_NONNULL_END
