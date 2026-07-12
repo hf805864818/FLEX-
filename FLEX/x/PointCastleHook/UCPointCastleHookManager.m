@@ -14,41 +14,44 @@ static NSTimeInterval gLastScanTime = 0;
 static BOOL gIsScanning = NO;
 
 // ============================================================
-//  策略：hook NSURLSession 的 dataTaskWithRequest:/dataTaskWithURL:
-//  （无 completionHandler 版本，Flutter dart:io 用的就是这两个）。
-//
-//  每次 task 创建时，通过 session.delegate 找到原始 delegate，
-//  然后 swizzle 其 didReceiveData: / didCompleteWithError: 方法。
-//
-//  这样无论 Flutter 的 session 是何时创建的，我们都能拦截到。
+//  策略：Hook NSURLSession 的所有 dataTask 创建方法，加入诊断日志。
+//  同时 hook completionHandler 和无 completionHandler 版本，
+//  打印每个请求的 URL 来确认 Flutter 到底用了哪个 API。
+//  
+//  一旦确认 Flutter 的 session，就 swizzle 其 delegate 的
+//  didReceiveData: / didCompleteWithError: 方法。
 // ============================================================
 
 // ─── Associated Object Keys ───
 static char kTaskDataAccumKey;      // 关联到 task: 累积的响应数据
 
 // ─── 保存原始 IMP 的全局变量 ───
-static NSURLSessionDataTask *(*gOriginalDataTaskWithRequest)(id, SEL, NSURLRequest *) = NULL;
-static NSURLSessionDataTask *(*gOriginalDataTaskWithURL)(id, SEL, NSURL *) = NULL;
+static NSURLSessionDataTask *(*gOrigDataTaskWithReq)(id, SEL, NSURLRequest *) = NULL;
+static NSURLSessionDataTask *(*gOrigDataTaskWithReqComp)(id, SEL, NSURLRequest *, void(^)(NSData *, NSURLResponse *, NSError *)) = NULL;
+static NSURLSessionDataTask *(*gOrigDataTaskWithURL)(id, SEL, NSURL *) = NULL;
+static NSURLSessionDataTask *(*gOrigDataTaskWithURLComp)(id, SEL, NSURL *, void(^)(NSData *, NSURLResponse *, NSError *)) = NULL;
+static NSURLSessionDownloadTask *(*gOrigDownloadTaskWithReq)(id, SEL, NSURLRequest *) = NULL;
+static NSURLSessionUploadTask *(*gOrigUploadTaskWithReq)(id, SEL, NSURLRequest *, NSData *) = NULL;
 
-// ─── 已 swizzled 的 delegate 类集合（线程安全用锁） ───
+// ─── 已 swizzled 的 delegate 类集合 ───
 static NSMutableSet<Class> *gSwizzledDelegateClasses = nil;
 static NSLock *gSwizzleLock = nil;
-
-// ─── 原始 delegate IMP 映射：Class -> { "didReceiveData" -> NSValue(IMP), "didComplete" -> NSValue(IMP) } ───
 static NSMutableDictionary<Class, NSMutableDictionary *> *gOriginalDelegateIMPs = nil;
 
 // 诊断计数器
+static NSUInteger gTotalDataTaskCalls = 0;
 static NSUInteger gTotalResponseCount = 0;
 static NSUInteger gMDTVMatchCount = 0;
+
+// 诊断：记录最后 10 个 URL（限流用）
+static NSMutableArray<NSString *> *gRecentURLs = nil;
 
 // ============================================================
 //  Hooked delegate 方法
 // ============================================================
 
-/// 替换后的 didReceiveData: — 累积响应数据
 static void PC_HookedDidReceiveData(id self, SEL _cmd, NSURLSession *session,
                                      NSURLSessionDataTask *task, NSData *data) {
-    // 累积数据到 task 的关联对象
     if (data.length > 0) {
         NSMutableData *accum = objc_getAssociatedObject(task, &kTaskDataAccumKey);
         if (!accum) {
@@ -60,8 +63,6 @@ static void PC_HookedDidReceiveData(id self, SEL _cmd, NSURLSession *session,
             [accum appendData:[data subdataWithRange:NSMakeRange(0, MIN(remain, data.length))]];
         }
     }
-
-    // 调用原始 IMP
     NSDictionary *imps = gOriginalDelegateIMPs[object_getClass(self)];
     IMP originalIMP = [imps[@"didReceiveData"] pointerValue];
     if (originalIMP) {
@@ -69,10 +70,8 @@ static void PC_HookedDidReceiveData(id self, SEL _cmd, NSURLSession *session,
     }
 }
 
-/// 替换后的 didCompleteWithError: — 触发密钥检测
 static void PC_HookedDidComplete(id self, SEL _cmd, NSURLSession *session,
                                   NSURLSessionTask *task, NSError *error) {
-    // 获取累积的数据
     NSMutableData *accum = objc_getAssociatedObject(task, &kTaskDataAccumKey);
     objc_setAssociatedObject(task, &kTaskDataAccumKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
@@ -81,7 +80,6 @@ static void PC_HookedDidComplete(id self, SEL _cmd, NSURLSession *session,
         [UCPointCastleHookManager handleDecryptedResponse:accum];
     }
 
-    // 调用原始 IMP
     NSDictionary *imps = gOriginalDelegateIMPs[object_getClass(self)];
     IMP originalIMP = [imps[@"didComplete"] pointerValue];
     if (originalIMP) {
@@ -89,10 +87,8 @@ static void PC_HookedDidComplete(id self, SEL _cmd, NSURLSession *session,
     }
 }
 
-/// 如果 delegate 的类还未被 swizzle，则执行 swizzle
 static void EnsureDelegateSwizzled(id delegate) {
     if (!delegate) return;
-
     Class cls = object_getClass(delegate);
     if (!cls) return;
 
@@ -104,10 +100,8 @@ static void EnsureDelegateSwizzled(id delegate) {
     [gSwizzledDelegateClasses addObject:cls];
     [gSwizzleLock unlock];
 
-    // 保存原始 IMP
     NSMutableDictionary *imps = [NSMutableDictionary dictionary];
 
-    // Swizzle didReceiveData:
     SEL dataSel = @selector(URLSession:dataTask:didReceiveData:);
     Method dataMethod = class_getInstanceMethod(cls, dataSel);
     if (dataMethod) {
@@ -116,7 +110,6 @@ static void EnsureDelegateSwizzled(id delegate) {
         method_setImplementation(dataMethod, (IMP)PC_HookedDidReceiveData);
     }
 
-    // Swizzle didCompleteWithError:
     SEL completeSel = @selector(URLSession:task:didCompleteWithError:);
     Method completeMethod = class_getInstanceMethod(cls, completeSel);
     if (completeMethod) {
@@ -132,32 +125,89 @@ static void EnsureDelegateSwizzled(id delegate) {
     [[DatabaseManager sharedManager] insertLogText:log];
 }
 
-/// 从 session 获取 delegate 并 swizzle 其方法
 static void TrySwizzleSessionDelegate(NSURLSession *session) {
     if (!session) return;
-    // NSURLSession.delegate 是 public readonly 属性
     id delegate = session.delegate;
     if (delegate) {
         EnsureDelegateSwizzled(delegate);
     }
 }
 
-// ============================================================
-//  Hook 实现
-// ============================================================
-
-/// Hook: -[NSURLSession dataTaskWithRequest:]（无 completionHandler）
-/// Flutter dart:io 在 iOS 上使用此方法创建 HTTP 请求
-static NSURLSessionDataTask *PC_HookedDataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request) {
-    TrySwizzleSessionDelegate((NSURLSession *)self);
-    return gOriginalDataTaskWithRequest(self, _cmd, request);
+/// 诊断日志：记录 URL 和 delegate 类名
+static void LogDataTask(NSString *methodName, NSURL *url, NSURLSession *session) {
+    gTotalDataTaskCalls++;
+    // 限流：每 10 个请求记一次，避免日志爆炸
+    if (gTotalDataTaskCalls % 10 == 1) {
+        NSString *host = url.host ?: @"(no host)";
+        NSString *delegateClass = NSStringFromClass([session.delegate class]);
+        if (!delegateClass) delegateClass = @"(nil delegate)";
+        NSString *log = [NSString stringWithFormat:@"[PointCastleHook] #%lu %@ host=%@ delegate=%@",
+                         (unsigned long)gTotalDataTaskCalls, methodName, host, delegateClass];
+        NSLog(@"%@", log);
+        [[DatabaseManager sharedManager] insertLogText:log];
+    }
 }
 
-/// Hook: -[NSURLSession dataTaskWithURL:]（无 completionHandler）
-/// Flutter 某些场景可能使用此方法
-static NSURLSessionDataTask *PC_HookedDataTaskWithURL(id self, SEL _cmd, NSURL *url) {
+// ============================================================
+//  Hook 实现 — 覆盖所有 dataTask/downloadTask/uploadTask 方法
+// ============================================================
+
+static NSURLSessionDataTask *PC_HookedDataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request) {
+    LogDataTask(@"dataTaskWithReq:", request.URL, (NSURLSession *)self);
     TrySwizzleSessionDelegate((NSURLSession *)self);
-    return gOriginalDataTaskWithURL(self, _cmd, url);
+    return gOrigDataTaskWithReq(self, _cmd, request);
+}
+
+static NSURLSessionDataTask *PC_HookedDataTaskWithRequestCompletion(id self, SEL _cmd, NSURLRequest *request,
+    void(^handler)(NSData *, NSURLResponse *, NSError *)) {
+    LogDataTask(@"dataTaskWithReq:completion:", request.URL, (NSURLSession *)self);
+    // 如果带 completionHandler，我们也要包装它来拿到响应数据
+    if (handler) {
+        NSURL *origURL = request.URL;
+        void(^wrappedHandler)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *resp, NSError *err) {
+            if (!err && data.length > 0) {
+                gTotalResponseCount++;
+                [UCPointCastleHookManager handleDecryptedResponse:data];
+            }
+            handler(data, resp, err);
+        };
+        return gOrigDataTaskWithReqComp(self, _cmd, request, wrappedHandler);
+    }
+    return gOrigDataTaskWithReqComp(self, _cmd, request, handler);
+}
+
+static NSURLSessionDataTask *PC_HookedDataTaskWithURL(id self, SEL _cmd, NSURL *url) {
+    LogDataTask(@"dataTaskWithURL:", url, (NSURLSession *)self);
+    TrySwizzleSessionDelegate((NSURLSession *)self);
+    return gOrigDataTaskWithURL(self, _cmd, url);
+}
+
+static NSURLSessionDataTask *PC_HookedDataTaskWithURLCompletion(id self, SEL _cmd, NSURL *url,
+    void(^handler)(NSData *, NSURLResponse *, NSError *)) {
+    LogDataTask(@"dataTaskWithURL:completion:", url, (NSURLSession *)self);
+    if (handler) {
+        void(^wrappedHandler)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *resp, NSError *err) {
+            if (!err && data.length > 0) {
+                gTotalResponseCount++;
+                [UCPointCastleHookManager handleDecryptedResponse:data];
+            }
+            handler(data, resp, err);
+        };
+        return gOrigDataTaskWithURLComp(self, _cmd, url, wrappedHandler);
+    }
+    return gOrigDataTaskWithURLComp(self, _cmd, url, handler);
+}
+
+static NSURLSessionDownloadTask *PC_HookedDownloadTaskWithRequest(id self, SEL _cmd, NSURLRequest *request) {
+    LogDataTask(@"downloadTaskWithReq:", request.URL, (NSURLSession *)self);
+    TrySwizzleSessionDelegate((NSURLSession *)self);
+    return gOrigDownloadTaskWithReq(self, _cmd, request);
+}
+
+static NSURLSessionUploadTask *PC_HookedUploadTaskWithRequest(id self, SEL _cmd, NSURLRequest *request, NSData *body) {
+    LogDataTask(@"uploadTaskWithReq:", request.URL, (NSURLSession *)self);
+    TrySwizzleSessionDelegate((NSURLSession *)self);
+    return gOrigUploadTaskWithReq(self, _cmd, request, body);
 }
 
 // ============================================================
@@ -174,6 +224,7 @@ static NSURLSessionDataTask *PC_HookedDataTaskWithURL(id self, SEL _cmd, NSURL *
         gSwizzledDelegateClasses = [NSMutableSet set];
         gSwizzleLock = [[NSLock alloc] init];
         gOriginalDelegateIMPs = [NSMutableDictionary dictionary];
+        gRecentURLs = [NSMutableArray array];
     }
 }
 
@@ -193,29 +244,33 @@ static NSURLSessionDataTask *PC_HookedDataTaskWithURL(id self, SEL _cmd, NSURL *
     dispatch_once(&onceToken, ^{
         Class sessionCls = [NSURLSession class];
 
-        // ─── Hook 1: dataTaskWithRequest: (无 completionHandler) ───
-        {
-            SEL sel = @selector(dataTaskWithRequest:);
-            Method method = class_getInstanceMethod(sessionCls, sel);
+        // Hook 所有 dataTask/downloadTask/uploadTask 创建方法
+        struct HookEntry {
+            SEL sel;
+            BOOL isClassMethod;
+            IMP *storage;
+            IMP replacement;
+        } entries[] = {
+            { @selector(dataTaskWithRequest:), NO, (IMP *)&gOrigDataTaskWithReq, (IMP)PC_HookedDataTaskWithRequest },
+            { @selector(dataTaskWithRequest:completionHandler:), NO, (IMP *)&gOrigDataTaskWithReqComp, (IMP)PC_HookedDataTaskWithRequestCompletion },
+            { @selector(dataTaskWithURL:), NO, (IMP *)&gOrigDataTaskWithURL, (IMP)PC_HookedDataTaskWithURL },
+            { @selector(dataTaskWithURL:completionHandler:), NO, (IMP *)&gOrigDataTaskWithURLComp, (IMP)PC_HookedDataTaskWithURLCompletion },
+            { @selector(downloadTaskWithRequest:), NO, (IMP *)&gOrigDownloadTaskWithReq, (IMP)PC_HookedDownloadTaskWithRequest },
+            { @selector(uploadTaskWithRequest:fromData:), NO, (IMP *)&gOrigUploadTaskWithReq, (IMP)PC_HookedUploadTaskWithRequest },
+        };
+        int count = sizeof(entries) / sizeof(entries[0]);
+
+        for (int i = 0; i < count; i++) {
+            Method method = entries[i].isClassMethod
+                ? class_getClassMethod(sessionCls, entries[i].sel)
+                : class_getInstanceMethod(sessionCls, entries[i].sel);
             if (method) {
-                gOriginalDataTaskWithRequest = (NSURLSessionDataTask *(*)(id, SEL, NSURLRequest *))
-                    method_getImplementation(method);
-                method_setImplementation(method, (IMP)PC_HookedDataTaskWithRequest);
+                *entries[i].storage = method_getImplementation(method);
+                method_setImplementation(method, entries[i].replacement);
             }
         }
 
-        // ─── Hook 2: dataTaskWithURL: (无 completionHandler) ───
-        {
-            SEL sel = @selector(dataTaskWithURL:);
-            Method method = class_getInstanceMethod(sessionCls, sel);
-            if (method) {
-                gOriginalDataTaskWithURL = (NSURLSessionDataTask *(*)(id, SEL, NSURL *))
-                    method_getImplementation(method);
-                method_setImplementation(method, (IMP)PC_HookedDataTaskWithURL);
-            }
-        }
-
-        NSString *log = @"[PointCastleHook] dataTask hooks installed (intercept delegate methods on task creation)";
+        NSString *log = [NSString stringWithFormat:@"[PointCastleHook] installed %d dataTask hooks (all variants)", count];
         NSLog(@"%@", log);
         [[DatabaseManager sharedManager] insertLogText:log];
     });
@@ -226,7 +281,6 @@ static NSURLSessionDataTask *PC_HookedDataTaskWithURL(id self, SEL _cmd, NSURL *
 + (void)handleDecryptedResponse:(NSData *)body {
     if (!body || body.length < 64) return;
 
-    // 只解析尾部 8KB，避免为大响应分配巨大 NSString
     static const NSUInteger kParseWindowSize = 8 * 1024;
     NSUInteger parseLen = MIN(body.length, kParseWindowSize);
     NSData *tailData = [body subdataWithRange:NSMakeRange(body.length - parseLen, parseLen)];
@@ -234,14 +288,12 @@ static NSURLSessionDataTask *PC_HookedDataTaskWithURL(id self, SEL _cmd, NSURL *
     NSString *text = [[NSString alloc] initWithData:tailData encoding:NSUTF8StringEncoding];
     if (!text) return;
 
-    // 查找 MDTV 响应特征：{"suffix":"...","data":"..."}
     NSRange dataRange = [text rangeOfString:@"\"data\"" options:NSBackwardsSearch];
     if (dataRange.location == NSNotFound) return;
 
     NSRange suffixRange = [text rangeOfString:@"\"suffix\"" options:NSBackwardsSearch];
     if (suffixRange.location == NSNotFound) return;
 
-    // 提取 suffix（6 位 hex）
     NSUInteger suffixSearchStart = suffixRange.location;
     NSUInteger suffixSearchLen = MIN(64, text.length - suffixSearchStart);
     NSString *suffix = [self extractJSONStringValue:text key:@"suffix"
@@ -256,8 +308,9 @@ static NSURLSessionDataTask *PC_HookedDataTaskWithURL(id self, SEL _cmd, NSURL *
 
     gMDTVMatchCount++;
 
-    NSString *log = [NSString stringWithFormat:@"[PointCastleHook] #%lu captured MDTV suffix=%@ dataLen=%lu (total responses: %lu)",
-                     (unsigned long)gMDTVMatchCount, suffix, (unsigned long)b64Data.length, (unsigned long)gTotalResponseCount];
+    NSString *log = [NSString stringWithFormat:@"[PointCastleHook] #%lu captured MDTV suffix=%@ dataLen=%lu (total tasks: %lu, responses: %lu)",
+                     (unsigned long)gMDTVMatchCount, suffix, (unsigned long)b64Data.length,
+                     (unsigned long)gTotalDataTaskCalls, (unsigned long)gTotalResponseCount];
     NSLog(@"%@", log);
     [[DatabaseManager sharedManager] insertLogText:log];
 
@@ -300,7 +353,6 @@ static NSURLSessionDataTask *PC_HookedDataTaskWithURL(id self, SEL _cmd, NSURL *
 + (NSArray<NSData *> *)ivCandidatesFromSuffix:(NSString *)suffix {
     NSMutableArray<NSData *> *ivs = [NSMutableArray array];
 
-    // 1. suffix 6 位 hex -> 3 字节，前面补 13 个 0x00，共 16 字节
     NSString *hex = [suffix lowercaseString];
     NSMutableData *iv1 = [NSMutableData dataWithLength:16];
     memset(iv1.mutableBytes, 0, 16);
@@ -316,14 +368,12 @@ static NSURLSessionDataTask *PC_HookedDataTaskWithURL(id self, SEL _cmd, NSURL *
     }
     [ivs addObject:iv1];
 
-    // 2. suffix 直接 UTF-8 编码后补零到 16 字节
     NSData *suffixData = [suffix dataUsingEncoding:NSUTF8StringEncoding];
     NSMutableData *iv2 = [NSMutableData dataWithLength:16];
     memset(iv2.mutableBytes, 0, 16);
     memcpy(iv2.mutableBytes, suffixData.bytes, MIN(suffixData.length, 16));
     [ivs addObject:iv2];
 
-    // 3. 全零 IV
     [ivs addObject:[NSMutableData dataWithLength:16]];
 
     return ivs;
