@@ -214,6 +214,6 @@ jobs:
             - 自动构建版本，更新于 $(date +%Y-%m-%d)
 
           files: artifacts/*
-          generate_release_notes: true
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT || github.token }}
