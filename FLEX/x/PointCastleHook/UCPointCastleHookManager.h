@@ -8,26 +8,27 @@ NS_ASSUME_NONNULL_BEGIN
  * MDTV 使用 Flutter + pointycastle 进行 AES 加密，密钥在 Dart 层生成，
  * 不经过 iOS CommonCrypto，因此 FLEX 原有的 CCCrypt hook 无法捕获。
  *
- * 本模块通过 NSURLSession Delegate 代理拦截方案工作：
- * 1. Hook NSURLSession 的 initWithConfiguration:delegate:delegateQueue:
- *    和 sessionWithConfiguration:delegate:delegateQueue: 方法
- * 2. 在 delegate 和 NSURLSession 之间插入 UCPointCastleDelegateProxy
- * 3. 代理拦截 didReceiveData / didCompleteWithError 获取明文响应
- * 4. 检测 MDTV 的 {"suffix":"...","data":"..."} 格式
- * 5. 触发 Dart 堆内存扫描，提取 AES 密钥候选并用捕获的密文进行验证
+ * 本模块通过 hook NSURLSession 的 dataTaskWithRequest:/dataTaskWithURL:
+ * （无 completionHandler 版本）工作：
+ * 1. 每次 task 创建时，通过 session.delegate 找到原始 delegate
+ * 2. Swizzle 其 didReceiveData: / didCompleteWithError: 方法
+ * 3. 累积响应数据，完成后检测 MDTV {"suffix":"...","data":"..."} 格式
+ * 4. 触发 Dart 堆内存扫描，提取 AES 密钥候选并用捕获的密文进行验证
+ *
+ * 优势：无论 Flutter 的 NSURLSession 何时创建，都能在首次请求时拦截。
  */
 @interface UCPointCastleHookManager : NSObject
 
 + (instancetype)sharedManager;
 
 /**
- * 安装 NSURLSession delegate 代理 hooks。
+ * 安装 NSURLSession dataTask hook。
  * 完全独立于 URLCapture.m，不依赖总开关状态。
  */
 - (void)installHooks;
 
 /**
- * 由 delegate 代理在收到解密后的 HTTP 响应时调用。
+ * 由 swizzled delegate 方法在收到解密后的 HTTP 响应时调用。
  * 检测是否包含 MDTV {"suffix":"...","data":"..."} 格式，并触发扫描。
  */
 + (void)handleDecryptedResponse:(NSData *)body;

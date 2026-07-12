@@ -14,126 +14,150 @@ static NSTimeInterval gLastScanTime = 0;
 static BOOL gIsScanning = NO;
 
 // ============================================================
-//  Delegate 代理 — 在 NSURLSession 和原始 delegate 之间插入
-//  拦截 didReceiveData / didCompleteWithError 获取明文响应
-//  其他所有 delegate 方法透明转发给原始 delegate
+//  策略：hook NSURLSession 的 dataTaskWithRequest:/dataTaskWithURL:
+//  （无 completionHandler 版本，Flutter dart:io 用的就是这两个）。
+//
+//  每次 task 创建时，通过 session.delegate 找到原始 delegate，
+//  然后 swizzle 其 didReceiveData: / didCompleteWithError: 方法。
+//
+//  这样无论 Flutter 的 session 是何时创建的，我们都能拦截到。
 // ============================================================
 
-@interface UCPointCastleDelegateProxy : NSObject <NSURLSessionDataDelegate, NSURLSessionTaskDelegate>
-@property (nonatomic, weak, readonly) id originalDelegate;
-@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSMutableData *> *taskDataMap;
-@property (nonatomic, strong) NSLock *dataLock;
-- (instancetype)initWithOriginalDelegate:(id)delegate;
-@end
+// ─── Associated Object Keys ───
+static char kTaskDataAccumKey;      // 关联到 task: 累积的响应数据
 
-@implementation UCPointCastleDelegateProxy
+// ─── 保存原始 IMP 的全局变量 ───
+static NSURLSessionDataTask *(*gOriginalDataTaskWithRequest)(id, SEL, NSURLRequest *) = NULL;
+static NSURLSessionDataTask *(*gOriginalDataTaskWithURL)(id, SEL, NSURL *) = NULL;
 
-- (instancetype)initWithOriginalDelegate:(id)delegate {
-    self = [super init];
-    if (self) {
-        _originalDelegate = delegate;
-        _taskDataMap = [NSMutableDictionary dictionary];
-        _dataLock = [[NSLock alloc] init];
-    }
-    return self;
-}
+// ─── 已 swizzled 的 delegate 类集合（线程安全用锁） ───
+static NSMutableSet<Class> *gSwizzledDelegateClasses = nil;
+static NSLock *gSwizzleLock = nil;
 
-/// 所有未直接实现的方法转发给原始 delegate
-- (id)forwardingTargetForSelector:(SEL)aSelector {
-    if ([self.originalDelegate respondsToSelector:aSelector]) {
-        return self.originalDelegate;
-    }
-    return nil;
-}
+// ─── 原始 delegate IMP 映射：Class -> { "didReceiveData" -> NSValue(IMP), "didComplete" -> NSValue(IMP) } ───
+static NSMutableDictionary<Class, NSMutableDictionary *> *gOriginalDelegateIMPs = nil;
 
-- (BOOL)respondsToSelector:(SEL)aSelector {
-    if (aSelector == @selector(URLSession:dataTask:didReceiveData:) ||
-        aSelector == @selector(URLSession:task:didCompleteWithError:)) {
-        return YES;
-    }
-    return [self.originalDelegate respondsToSelector:aSelector] || [super respondsToSelector:aSelector];
-}
+// 诊断计数器
+static NSUInteger gTotalResponseCount = 0;
+static NSUInteger gMDTVMatchCount = 0;
 
-/// 拦截 didReceiveData — 累积响应数据
-- (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(NSData *)data {
+// ============================================================
+//  Hooked delegate 方法
+// ============================================================
+
+/// 替换后的 didReceiveData: — 累积响应数据
+static void PC_HookedDidReceiveData(id self, SEL _cmd, NSURLSession *session,
+                                     NSURLSessionDataTask *task, NSData *data) {
+    // 累积数据到 task 的关联对象
     if (data.length > 0) {
-        [self.dataLock lock];
-        NSNumber *key = @(dataTask.taskIdentifier);
-        NSMutableData *accum = self.taskDataMap[key];
+        NSMutableData *accum = objc_getAssociatedObject(task, &kTaskDataAccumKey);
         if (!accum) {
             accum = [NSMutableData data];
-            self.taskDataMap[key] = accum;
+            objc_setAssociatedObject(task, &kTaskDataAccumKey, accum, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
-        // 限制单条响应最多 512KB，避免内存爆炸
         if (accum.length < 512 * 1024) {
             NSUInteger remain = 512 * 1024 - accum.length;
             [accum appendData:[data subdataWithRange:NSMakeRange(0, MIN(remain, data.length))]];
         }
-        [self.dataLock unlock];
     }
 
-    // 转发给原始 delegate
-    if ([self.originalDelegate respondsToSelector:_cmd]) {
-        [self.originalDelegate URLSession:session dataTask:dataTask didReceiveData:data];
+    // 调用原始 IMP
+    NSDictionary *imps = gOriginalDelegateIMPs[object_getClass(self)];
+    IMP originalIMP = [imps[@"didReceiveData"] pointerValue];
+    if (originalIMP) {
+        ((void (*)(id, SEL, NSURLSession *, NSURLSessionDataTask *, NSData *))originalIMP)(self, _cmd, session, task, data);
     }
 }
 
-/// 拦截 didCompleteWithError — 响应完成，触发密钥检测
-- (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task didCompleteWithError:(NSError *)error {
-    [self.dataLock lock];
-    NSNumber *key = @(task.taskIdentifier);
-    NSMutableData *accum = self.taskDataMap[key];
-    [self.taskDataMap removeObjectForKey:key];
-    [self.dataLock unlock];
+/// 替换后的 didCompleteWithError: — 触发密钥检测
+static void PC_HookedDidComplete(id self, SEL _cmd, NSURLSession *session,
+                                  NSURLSessionTask *task, NSError *error) {
+    // 获取累积的数据
+    NSMutableData *accum = objc_getAssociatedObject(task, &kTaskDataAccumKey);
+    objc_setAssociatedObject(task, &kTaskDataAccumKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 
-    // 只在成功且有数据时触发检测
     if (!error && accum.length > 0) {
+        gTotalResponseCount++;
         [UCPointCastleHookManager handleDecryptedResponse:accum];
     }
 
-    // 转发给原始 delegate
-    if ([self.originalDelegate respondsToSelector:_cmd]) {
-        [self.originalDelegate URLSession:session task:task didCompleteWithError:error];
+    // 调用原始 IMP
+    NSDictionary *imps = gOriginalDelegateIMPs[object_getClass(self)];
+    IMP originalIMP = [imps[@"didComplete"] pointerValue];
+    if (originalIMP) {
+        ((void (*)(id, SEL, NSURLSession *, NSURLSessionTask *, NSError *))originalIMP)(self, _cmd, session, task, error);
     }
 }
 
-@end
+/// 如果 delegate 的类还未被 swizzle，则执行 swizzle
+static void EnsureDelegateSwizzled(id delegate) {
+    if (!delegate) return;
 
-// ============================================================
-//  保存原始 IMP（避免与 URLCapture.m 的 key 冲突，使用全局变量）
-// ============================================================
+    Class cls = object_getClass(delegate);
+    if (!cls) return;
 
-static id (*gOriginalInitIMP)(id, SEL, NSURLSessionConfiguration *, id, NSOperationQueue *) = NULL;
-static NSURLSession *(*gOriginalSessionFactoryIMP)(id, SEL, NSURLSessionConfiguration *, id, NSOperationQueue *) = NULL;
+    [gSwizzleLock lock];
+    if ([gSwizzledDelegateClasses containsObject:cls]) {
+        [gSwizzleLock unlock];
+        return;
+    }
+    [gSwizzledDelegateClasses addObject:cls];
+    [gSwizzleLock unlock];
+
+    // 保存原始 IMP
+    NSMutableDictionary *imps = [NSMutableDictionary dictionary];
+
+    // Swizzle didReceiveData:
+    SEL dataSel = @selector(URLSession:dataTask:didReceiveData:);
+    Method dataMethod = class_getInstanceMethod(cls, dataSel);
+    if (dataMethod) {
+        IMP original = method_getImplementation(dataMethod);
+        imps[@"didReceiveData"] = [NSValue valueWithPointer:original];
+        method_setImplementation(dataMethod, (IMP)PC_HookedDidReceiveData);
+    }
+
+    // Swizzle didCompleteWithError:
+    SEL completeSel = @selector(URLSession:task:didCompleteWithError:);
+    Method completeMethod = class_getInstanceMethod(cls, completeSel);
+    if (completeMethod) {
+        IMP original = method_getImplementation(completeMethod);
+        imps[@"didComplete"] = [NSValue valueWithPointer:original];
+        method_setImplementation(completeMethod, (IMP)PC_HookedDidComplete);
+    }
+
+    gOriginalDelegateIMPs[(id)cls] = imps;
+
+    NSString *log = [NSString stringWithFormat:@"[PointCastleHook] swizzled delegate class %@", NSStringFromClass(cls)];
+    NSLog(@"%@", log);
+    [[DatabaseManager sharedManager] insertLogText:log];
+}
+
+/// 从 session 获取 delegate 并 swizzle 其方法
+static void TrySwizzleSessionDelegate(NSURLSession *session) {
+    if (!session) return;
+    // NSURLSession.delegate 是 public readonly 属性
+    id delegate = session.delegate;
+    if (delegate) {
+        EnsureDelegateSwizzled(delegate);
+    }
+}
 
 // ============================================================
 //  Hook 实现
 // ============================================================
 
-/// ── Hook 1: -[NSURLSession initWithConfiguration:delegate:delegateQueue:] ──
-/// 如果 Flutter 直接调用 init 方法（不走类方法），这里拦截
-static id UCPCHookedInitWithConfig(id self, SEL _cmd, NSURLSessionConfiguration *config,
-                                     id delegate, NSOperationQueue *queue) {
-    if (delegate && ![delegate isKindOfClass:[UCPointCastleDelegateProxy class]]) {
-        UCPointCastleDelegateProxy *proxy = [[UCPointCastleDelegateProxy alloc] initWithOriginalDelegate:delegate];
-        delegate = (id)proxy;
-    }
-
-    // 调用"原始"IMP — 可能是 URLCapture.m 的 hook，也可能是真正的原始实现
-    // 无论是哪种，我们的代理 delegate 都会被正确传递下去
-    return gOriginalInitIMP(self, _cmd, config, delegate, queue);
+/// Hook: -[NSURLSession dataTaskWithRequest:]（无 completionHandler）
+/// Flutter dart:io 在 iOS 上使用此方法创建 HTTP 请求
+static NSURLSessionDataTask *PC_HookedDataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request) {
+    TrySwizzleSessionDelegate((NSURLSession *)self);
+    return gOriginalDataTaskWithRequest(self, _cmd, request);
 }
 
-/// ── Hook 2: +[NSURLSession sessionWithConfiguration:delegate:delegateQueue:] ──
-/// 这是 NSURLSession 的工厂方法，Flutter dart:io 使用此方法创建 session
-static NSURLSession *UCPCHookedSessionFactory(id self, SEL _cmd, NSURLSessionConfiguration *config,
-                                                id delegate, NSOperationQueue *queue) {
-    if (delegate && ![delegate isKindOfClass:[UCPointCastleDelegateProxy class]]) {
-        UCPointCastleDelegateProxy *proxy = [[UCPointCastleDelegateProxy alloc] initWithOriginalDelegate:delegate];
-        delegate = (id)proxy;
-    }
-
-    return gOriginalSessionFactoryIMP(self, _cmd, config, delegate, queue);
+/// Hook: -[NSURLSession dataTaskWithURL:]（无 completionHandler）
+/// Flutter 某些场景可能使用此方法
+static NSURLSessionDataTask *PC_HookedDataTaskWithURL(id self, SEL _cmd, NSURL *url) {
+    TrySwizzleSessionDelegate((NSURLSession *)self);
+    return gOriginalDataTaskWithURL(self, _cmd, url);
 }
 
 // ============================================================
@@ -144,6 +168,14 @@ static NSURLSession *UCPCHookedSessionFactory(id self, SEL _cmd, NSURLSessionCon
 @end
 
 @implementation UCPointCastleHookManager
+
++ (void)initialize {
+    if (self == [UCPointCastleHookManager class]) {
+        gSwizzledDelegateClasses = [NSMutableSet set];
+        gSwizzleLock = [[NSLock alloc] init];
+        gOriginalDelegateIMPs = [NSMutableDictionary dictionary];
+    }
+}
 
 + (instancetype)sharedManager {
     static UCPointCastleHookManager *instance = nil;
@@ -161,33 +193,29 @@ static NSURLSession *UCPCHookedSessionFactory(id self, SEL _cmd, NSURLSessionCon
     dispatch_once(&onceToken, ^{
         Class sessionCls = [NSURLSession class];
 
-        // ─── Hook 1: 实例方法 initWithConfiguration:delegate:delegateQueue: ───
-        // 保存当前 IMP（可能是 URLCapture.m 的 hook，也可能是真正的原始实现），
-        // 然后替换为我们的实现。这样我们的 hook 会在 URLCapture 的 hook 之后运行，
-        // URLCapture 仍然能正常工作（它先收到原始 delegate，hook 其方法，
-        // 然后我们的 hook 把 delegate 换成代理后再调用 init）。
+        // ─── Hook 1: dataTaskWithRequest: (无 completionHandler) ───
         {
-            SEL sel = @selector(initWithConfiguration:delegate:delegateQueue:);
+            SEL sel = @selector(dataTaskWithRequest:);
             Method method = class_getInstanceMethod(sessionCls, sel);
             if (method) {
-                gOriginalInitIMP = (id (*)(id, SEL, NSURLSessionConfiguration *, id, NSOperationQueue *))
+                gOriginalDataTaskWithRequest = (NSURLSessionDataTask *(*)(id, SEL, NSURLRequest *))
                     method_getImplementation(method);
-                method_setImplementation(method, (IMP)UCPCHookedInitWithConfig);
+                method_setImplementation(method, (IMP)PC_HookedDataTaskWithRequest);
             }
         }
 
-        // ─── Hook 2: 类方法 sessionWithConfiguration:delegate:delegateQueue: ───
+        // ─── Hook 2: dataTaskWithURL: (无 completionHandler) ───
         {
-            SEL sel = @selector(sessionWithConfiguration:delegate:delegateQueue:);
-            Method method = class_getClassMethod(sessionCls, sel);
+            SEL sel = @selector(dataTaskWithURL:);
+            Method method = class_getInstanceMethod(sessionCls, sel);
             if (method) {
-                gOriginalSessionFactoryIMP = (NSURLSession *(*)(id, SEL, NSURLSessionConfiguration *, id, NSOperationQueue *))
+                gOriginalDataTaskWithURL = (NSURLSessionDataTask *(*)(id, SEL, NSURL *))
                     method_getImplementation(method);
-                method_setImplementation(method, (IMP)UCPCHookedSessionFactory);
+                method_setImplementation(method, (IMP)PC_HookedDataTaskWithURL);
             }
         }
 
-        NSString *log = @"[PointCastleHook] Delegate proxy hooks installed (init + factory method)";
+        NSString *log = @"[PointCastleHook] dataTask hooks installed (intercept delegate methods on task creation)";
         NSLog(@"%@", log);
         [[DatabaseManager sharedManager] insertLogText:log];
     });
@@ -226,8 +254,10 @@ static NSURLSession *UCPCHookedSessionFactory(id self, SEL _cmd, NSURLSessionCon
 
     if (!suffix || suffix.length != 6 || !b64Data || b64Data.length < 16) return;
 
-    NSString *log = [NSString stringWithFormat:@"[PointCastleHook] captured response suffix=%@ dataLen=%lu",
-                     suffix, (unsigned long)b64Data.length];
+    gMDTVMatchCount++;
+
+    NSString *log = [NSString stringWithFormat:@"[PointCastleHook] #%lu captured MDTV suffix=%@ dataLen=%lu (total responses: %lu)",
+                     (unsigned long)gMDTVMatchCount, suffix, (unsigned long)b64Data.length, (unsigned long)gTotalResponseCount];
     NSLog(@"%@", log);
     [[DatabaseManager sharedManager] insertLogText:log];
 
