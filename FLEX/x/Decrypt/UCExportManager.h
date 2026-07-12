@@ -13,6 +13,9 @@ NS_ASSUME_NONNULL_BEGIN
                fromViewController:(UIViewController *)vc
                        completion:(void(^_Nullable)(BOOL success))completion;
 
++ (void)exportAllDataFromViewController:(UIViewController *)vc
+                             completion:(void(^_Nullable)(BOOL success))completion;
+
 @end
 
 NS_ASSUME_NONNULL_END

@@ -320,7 +320,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 0) return self.switchItems.count;
     if (section == 1) return 8;  // 解密/密钥/算法/动态Hook/内存扫描/函数拦截/Socket/PointCastle
-    return 1;
+    return 2;  // 导出全部数据 + 清除所有本地数据
 }
 
 - (NSString *)tableView:(UITableView *)tableView titleForHeaderInSection:(NSInteger)section {
@@ -399,8 +399,13 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:buttonCellId];
             cell.backgroundColor = FLEXColor.primaryBackgroundColor;
         }
-        cell.textLabel.text = @"清除所有本地数据";
-        cell.textLabel.textColor = UIColor.redColor;
+        if (indexPath.row == 0) {
+            cell.textLabel.text = @"导出全部数据";
+            cell.textLabel.textColor = [UIColor colorWithRed:0.2 green:0.6 blue:1.0 alpha:1.0];
+        } else {
+            cell.textLabel.text = @"清除所有本地数据";
+            cell.textLabel.textColor = UIColor.redColor;
+        }
         cell.textLabel.textAlignment = NSTextAlignmentCenter;
         return cell;
     }
@@ -410,6 +415,21 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     
     if (indexPath.section == 2) {
+        if (indexPath.row == 0) {
+            // 导出全部数据
+            [UCExportManager exportAllDataFromViewController:self completion:^(BOOL success) {
+                if (!success) {
+                    UIAlertController *alert = [UIAlertController
+                        alertControllerWithTitle:@"提示"
+                        message:@"没有数据可导出"
+                        preferredStyle:UIAlertControllerStyleAlert];
+                    [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+                    [self presentViewController:alert animated:YES completion:nil];
+                }
+            }];
+            return;
+        }
+        
         UIAlertController *alert = [UIAlertController
             alertControllerWithTitle:@"确认清除"
             message:@"将清除所有解密记录、密钥记录、算法记录等本地数据，确定吗？"

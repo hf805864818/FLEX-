@@ -1,6 +1,7 @@
 #import "UCExportManager.h"
 #import "../ClassDump/CDZipWriter.h"
 #import "FLEXActivityViewController.h"
+#import "DatabaseManager.h"
 
 @interface FLEXHTTPTransaction : NSObject
 @property (nonatomic, readonly) NSString *requestID;
@@ -155,6 +156,74 @@
 
         NSError *err = nil;
         BOOL ok = [CDZipWriter createZipAtPath:zipPath rootDir:exportDir files:fileNames progress:nil error:&err];
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (ok) {
+                [self shareFileAtPath:zipPath fromViewController:vc];
+            }
+            if (completion) completion(ok);
+        });
+    });
+}
+
++ (void)exportAllDataFromViewController:(UIViewController *)vc
+                             completion:(void (^)(BOOL))completion {
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSString *exportDir = [[self tempExportDir] stringByAppendingPathComponent:@"all_data"];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        [fm removeItemAtPath:exportDir error:nil];
+        [fm createDirectoryAtPath:exportDir withIntermediateDirectories:YES attributes:nil error:nil];
+
+        NSMutableArray<NSString *> *allFiles = [NSMutableArray array];
+
+        // 1. 复制 SQLite 数据库文件（完整原始数据）
+        NSString *dbPath = [DatabaseManager sharedManager].dbPath;
+        if (dbPath && [fm fileExistsAtPath:dbPath]) {
+            NSString *dbCopy = [exportDir stringByAppendingPathComponent:@"database.sqlite"];
+            [fm copyItemAtPath:dbPath toPath:dbCopy error:nil];
+            [allFiles addObject:dbCopy];
+        }
+
+        // 2. 导出所有表为文本文件
+        NSArray<NSString *> *tables = @[
+            @"decrypt_data", @"crypto_keys", @"jiamisuanfa", @"hanmiyao",
+            @"url_responses", @"dynamic_hook", @"memory_scan", @"func_intercept",
+            @"pointycastle_keys", @"rsa_data", @"zhaiyao",
+            @"ssl_certificates", @"ssl_challenges", @"ssl_psk", @"proxy_settings",
+            @"yunxingrizhi"
+        ];
+
+        DatabaseManager *db = [DatabaseManager sharedManager];
+        for (NSString *table in tables) {
+            NSArray<NSDictionary *> *records = [db queryAllRecordsFromTable:table limit:99999];
+            if (records.count == 0) continue;
+
+            NSString *tableDir = [exportDir stringByAppendingPathComponent:table];
+            [fm createDirectoryAtPath:tableDir withIntermediateDirectories:YES attributes:nil error:nil];
+
+            for (NSInteger i = 0; i < (NSInteger)records.count; i++) {
+                NSDictionary *record = records[i];
+                // 不同表的文本列名不同：longText / detail / logText
+                NSString *text = record[@"longText"] ?: record[@"detail"] ?: record[@"logText"] ?: @"";
+                NSString *ts = record[@"timestamp"] ?: [NSString stringWithFormat:@"%ld", (long)i];
+                NSString *safe = [[ts stringByReplacingOccurrencesOfString:@":" withString:@"-"]
+                                  stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
+                NSString *filename = [NSString stringWithFormat:@"%02ld_%@.txt", (long)(i + 1), safe];
+                NSString *filePath = [tableDir stringByAppendingPathComponent:filename];
+                [text writeToFile:filePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
+                [allFiles addObject:filePath];
+            }
+        }
+
+        // 3. 打包为 zip
+        NSDateFormatter *df = [[NSDateFormatter alloc] init];
+        df.dateFormat = @"yyyy-MM-dd_HH-mm-ss";
+        NSString *dateStr = [df stringFromDate:[NSDate date]];
+        NSString *zipName = [NSString stringWithFormat:@"FLEX_全部数据_%@.zip", dateStr];
+        NSString *zipPath = [exportDir stringByAppendingPathComponent:zipName];
+
+        NSError *err = nil;
+        BOOL ok = [CDZipWriter createZipAtPath:zipPath rootDir:exportDir files:allFiles progress:nil error:&err];
 
         dispatch_async(dispatch_get_main_queue(), ^{
             if (ok) {

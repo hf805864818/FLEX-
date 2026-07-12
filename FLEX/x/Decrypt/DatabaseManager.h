@@ -4,6 +4,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface DatabaseManager : NSObject
 
+@property (nonatomic, readonly) NSString *dbPath;
+
 + (instancetype)sharedManager;
 
 - (void)createTables;
