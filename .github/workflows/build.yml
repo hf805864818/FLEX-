@@ -26,6 +26,8 @@ jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 30
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -194,26 +196,26 @@ jobs:
 
       # ============ 8. 创建 Release ============
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.version.outputs.new_version }}
-          name: FLEX++ v${{ steps.version.outputs.new_version }}
-          body: |
-            ## FLEX++ v${{ steps.version.outputs.new_version }}
+        run: |
+          TAG="v${{ steps.version.outputs.new_version }}"
+          TITLE="FLEX++ v${{ steps.version.outputs.new_version }}"
+          BODY="## FLEX++ v${{ steps.version.outputs.new_version }}
 
-            ### 📦 构建产物
-            - `FLEX++.dylib` — 独立动态库，可直接注入任意App
-            - `.deb` — 越狱安装包（rootless）
+          ### 📦 构建产物
+          - \`FLEX++.dylib\` — 独立动态库，可直接注入任意App
+          - \`.deb\` — 越狱安装包（rootless）
 
-            ### 🚀 安装方式
-            - **越狱设备**: 安装.deb包
-            - **未越狱**: 使用TrollFools/Dopamine等工具注入dylib
-            - **激活**: 双击状态栏呼出/隐藏调试面板
+          ### 🚀 安装方式
+          - **越狱设备**: 安装.deb包
+          - **未越狱**: 使用TrollFools/Dopamine等工具注入dylib
+          - **激活**: 双击状态栏呼出/隐藏调试面板
 
-            ### 🔧 更新内容
-            - 自动构建版本，更新于 $(date +%Y-%m-%d)
+          ### 🔧 更新内容
+          - 自动构建版本，更新于 $(date +%Y-%m-%d)"
 
-          files: artifacts/*
-          generate_release_notes: false
+          gh release create "$TAG" \
+            --title "$TITLE" \
+            --notes "$BODY" \
+            artifacts/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT || github.token }}
+          GH_TOKEN: ${{ github.token }}
