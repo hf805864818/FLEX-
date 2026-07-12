@@ -2,6 +2,7 @@
 #import "UCDartMemoryScanner.h"
 #import "UCAESKeyValidator.h"
 #import "../Decrypt/DatabaseManager.h"
+#import <objc/runtime.h>
 #import <pthread.h>
 
 // 扫描去抖间隔（秒）
