@@ -281,6 +281,13 @@ static NSURLSessionUploadTask *PC_HookedUploadTaskWithRequest(id self, SEL _cmd,
 + (void)handleDecryptedResponse:(NSData *)body {
     if (!body || body.length < 64) return;
 
+    // 运行时检查开关状态（hooks 始终安装，但处理逻辑受开关控制）
+    BOOL enabled = [[DatabaseManager sharedManager]
+        getSwitch:@"pointycastle_hook_enabled"
+        bundleID:[[NSBundle mainBundle] bundleIdentifier] ?: @"unknown"
+        defaultValue:NO];
+    if (!enabled) return;
+
     static const NSUInteger kParseWindowSize = 8 * 1024;
     NSUInteger parseLen = MIN(body.length, kParseWindowSize);
     NSData *tailData = [body subdataWithRange:NSMakeRange(body.length - parseLen, parseLen)];

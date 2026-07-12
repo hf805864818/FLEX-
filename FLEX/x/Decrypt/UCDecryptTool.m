@@ -118,14 +118,9 @@ NSString *HexStringFromBytes(const void *bytes, size_t length) {
             // 内存扫描模块（始终启用，可通过面板手动控制）
             [[UCMemoryScanManager sharedManager] startScan];
 
-            // PointCastleHook：针对 Flutter / pointycastle 的 AES 密钥捕获
-            BOOL pointCastleEnabled = [[DatabaseManager sharedManager]
-                getSwitch:@"pointycastle_hook_enabled"
-                bundleID:CurrentBundleID()
-                defaultValue:NO];
-            if (pointCastleEnabled) {
-                [[UCPointCastleHookManager sharedManager] installHooks];
-            }
+            // PointCastleHook：始终安装 hooks，开关在运行时检查
+            // （dispatch_once 保证只安装一次，无论开关何时打开都能生效）
+            [[UCPointCastleHookManager sharedManager] installHooks];
         }
     });
 }
