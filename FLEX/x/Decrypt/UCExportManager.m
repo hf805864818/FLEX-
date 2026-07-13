@@ -70,6 +70,12 @@
         dispatch_async(dispatch_get_main_queue(), ^{
             if (ok) {
                 [self shareFileAtPath:zipPath fromViewController:vc];
+            } else {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"导出失败"
+                                                                               message:[NSString stringWithFormat:@"打包错误: %@", err.localizedDescription ?: @"未知错误"]
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+                [vc presentViewController:alert animated:YES completion:nil];
             }
             if (completion) completion(ok);
         });
