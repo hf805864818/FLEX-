@@ -206,7 +206,8 @@ static void uc_NSLogv(NSString *format, va_list args) {
 #pragma mark - 导出
 
 - (void)exportAllLogsFromViewController:(UIViewController *)vc completion:(void (^)(BOOL))completion {
-    NSArray<NSDictionary *> *logs = [self allLogs];
+    // 导出时使用大 limit，不限制为 maxLogCount（后者是 UI 展示的保留策略数）
+    NSArray<NSDictionary *> *logs = [self logsWithLimit:99999];
     if (logs.count == 0) {
         if (completion) completion(NO);
         return;

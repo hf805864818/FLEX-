@@ -419,7 +419,7 @@
 #pragma mark - 运行日志管理
 
 - (NSArray<NSDictionary *> *)queryLogRecords:(NSInteger)limit {
-    if (limit <= 0) limit = 1000;
+    if (limit <= 0) limit = 50000;
 
     __block NSMutableArray *results = [NSMutableArray array];
     dispatch_sync(self.dbQueue, ^{
