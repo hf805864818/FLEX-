@@ -9,6 +9,7 @@
 #import "FLEX/x/SocketCapture/UCSocketCaptureManager.h"
 #import "FLEX/x/MemoryScan/UCMemoryScanManager.h"
 #import "FLEX/x/Decrypt/UCDecryptTool.h"
+#import "FLEX/x/UCLog/UCAppLogManager.h"
 
 %hook UIStatusBarManager
 
@@ -42,5 +43,8 @@
         // ★ 启动内存扫描（扫描libapp.so找硬编码密钥）
         [[UCMemoryScanManager sharedManager] startScan];
         NSLog(@"[FLEX++] MemoryScan 模块已启动");
+        
+        // ★ 按开关启动日志捕获（默认关闭，避免卡顿）
+        [[UCAppLogManager sharedManager] startCaptureIfEnabled];
     });
 }

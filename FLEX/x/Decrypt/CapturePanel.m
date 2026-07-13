@@ -304,6 +304,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             [CaptureSwitchItem itemWithTitle:@"动态Hook" key:@"dynamic_hook_enabled" desc:@"启用运行时动态方法Hook" default:NO],
             [CaptureSwitchItem itemWithTitle:@"函数拦截" key:@"func_intercept_enabled" desc:@"启用敏感函数调用拦截" default:NO],
             [CaptureSwitchItem itemWithTitle:@"PointCastle Hook" key:@"pointycastle_hook_enabled" desc:@"捕获 Flutter / pointycastle AES 密钥" default:NO],
+            [CaptureSwitchItem itemWithTitle:@"运行日志捕获" key:@"uc_applog_capture" desc:@"捕获当前App的NSLog/os_log日志" default:NO],
         ];
     }
     return self;

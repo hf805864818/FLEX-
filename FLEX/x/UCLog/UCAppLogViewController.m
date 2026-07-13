@@ -29,13 +29,15 @@ static NSString * const kCellIdentifier = @"UCAppLogCell";
     [self setupTableView];
     [self setupToolbar];
     [self setupNavigationBar];
-
-    // 启动日志捕获
-    [[UCAppLogManager sharedManager] startCapture];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
+    if (![[UCAppLogManager sharedManager] isCaptureEnabled]) {
+        [self showToast:@"日志捕获已关闭，请在功能开关中开启"];
+    } else {
+        [[UCAppLogManager sharedManager] startCaptureIfEnabled];
+    }
     [self reloadData];
     [self startRefreshTimer];
 }

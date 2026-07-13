@@ -18,11 +18,14 @@ static void uc_NSLogv(NSString *format, va_list args) {
     if (!format) return;
     NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
     if (msg.length > 0) {
-        [[DatabaseManager sharedManager] insertLogText:msg];
+        [[UCAppLogManager sharedManager] enqueueLog:msg];
     }
 }
 
 @interface UCAppLogManager ()
+@property (nonatomic, strong) dispatch_queue_t logQueue;
+@property (nonatomic, strong) NSMutableArray<NSString *> *pendingLogs;
+@property (nonatomic, strong) NSTimer *flushTimer;
 @property (nonatomic, strong) NSTimer *cleanupTimer;
 @property (nonatomic, assign) BOOL isCapturing;
 @end
@@ -41,57 +44,92 @@ static void uc_NSLogv(NSString *format, va_list args) {
 - (instancetype)init {
     self = [super init];
     if (self) {
+        _logQueue = dispatch_queue_create("com.ucflex.applog.queue", DISPATCH_QUEUE_SERIAL);
+        _pendingLogs = [NSMutableArray array];
         NSUserDefaults *ud = [NSUserDefaults standardUserDefaults];
         _maxLogCount = [ud integerForKey:kUCAppLogMaxCountKey];
         if (_maxLogCount <= 0) _maxLogCount = 5000;
         _maxLogDays = [ud integerForKey:kUCAppLogMaxDaysKey];
         if (_maxLogDays <= 0) _maxLogDays = 7;
+        // 默认只开 NSLog hook，OSLog 更耗性能，需要手动开
         _captureNSLog = [ud objectForKey:kUCAppLogCaptureNSLogKey] ? [ud boolForKey:kUCAppLogCaptureNSLogKey] : YES;
-        _captureOSLog = [ud objectForKey:kUCAppLogCaptureOSLogKey] ? [ud boolForKey:kUCAppLogCaptureOSLogKey] : YES;
+        _captureOSLog = [ud objectForKey:kUCAppLogCaptureOSLogKey] ? [ud boolForKey:kUCAppLogCaptureOSLogKey] : NO;
     }
     return self;
+}
+
+#pragma mark - 开关控制
+
+- (BOOL)isCaptureEnabled {
+    NSString *bundleID = [[NSBundle mainBundle] bundleIdentifier] ?: @"unknown";
+    return [[DatabaseManager sharedManager] getSwitch:@"uc_applog_capture" bundleID:bundleID defaultValue:NO];
+}
+
+- (void)startCaptureIfEnabled {
+    if (self.isCapturing) return;
+    if (![self isCaptureEnabled]) return;
+    [self startCapture];
 }
 
 - (void)startCapture {
     if (self.isCapturing) return;
     self.isCapturing = YES;
 
-    // 方案1：重定向 stderr，捕获 NSLog / print
-    if (self.captureNSLog) {
-        [self redirectStderrToFile];
-    }
-
-    // 方案2：hook NSLogv（更直接，不依赖文件重定向）
+    // 方案1：hook NSLogv，轻量，主线程只做入队
     if (self.captureNSLog) {
         [self hookNSLog];
     }
 
-    // 方案3：OSLog 私有 SPI，捕获 os_log / 系统日志
+    // 方案2：OSLog 私有 SPI，较耗性能，默认关闭
     if (self.captureOSLog) {
         [self startOSLogCapture];
     }
 
-    // 定时清理
+    // 定时 flush 和清理
+    [self startFlushTimer];
     [self startCleanupTimer];
 }
 
 - (void)stopCapture {
     self.isCapturing = NO;
+    [self flushLogs];
+    [self.flushTimer invalidate];
+    self.flushTimer = nil;
     [self.cleanupTimer invalidate];
     self.cleanupTimer = nil;
 }
 
-#pragma mark - stderr 重定向
+#pragma mark - 批量写入
 
-- (void)redirectStderrToFile {
-    NSString *logPath = [self logFilePath];
-    const char *path = [logPath UTF8String];
-    freopen(path, "a+", stderr);
+- (void)enqueueLog:(NSString *)msg {
+    if (!msg || msg.length == 0) return;
+    dispatch_async(self.logQueue, ^{
+        [self.pendingLogs addObject:msg];
+        if (self.pendingLogs.count >= 30) {
+            [self flushLogs];
+        }
+    });
 }
 
-- (NSString *)logFilePath {
-    NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
-    return [doc stringByAppendingPathComponent:@"uc_applog_stderr.log"];
+- (void)flushLogs {
+    dispatch_async(self.logQueue, ^{
+        if (self.pendingLogs.count == 0) return;
+        NSArray<NSString *> *batch = [self.pendingLogs copy];
+        [self.pendingLogs removeAllObjects];
+        DatabaseManager *db = [DatabaseManager sharedManager];
+        for (NSString *msg in batch) {
+            [db insertLogText:msg];
+        }
+    });
+}
+
+- (void)startFlushTimer {
+    [self flushLogs];
+    self.flushTimer = [NSTimer scheduledTimerWithTimeInterval:2.0
+                                                         target:self
+                                                       selector:@selector(flushLogs)
+                                                       userInfo:nil
+                                                        repeats:YES];
 }
 
 #pragma mark - NSLog Hook
@@ -113,10 +151,9 @@ static void uc_NSLogv(NSString *format, va_list args) {
         for (FLEXSystemLogMessage *msg in newMessages) {
             NSString *text = msg.messageText;
             if (text.length > 0) {
-                [[DatabaseManager sharedManager] insertLogText:text];
+                [weakSelf enqueueLog:text];
             }
         }
-        [weakSelf cleanupIfNeeded];
     }];
     controller.persistent = YES;
     [controller startMonitoring];
@@ -126,10 +163,12 @@ static void uc_NSLogv(NSString *format, va_list args) {
 #pragma mark - 查询/删除
 
 - (NSArray<NSDictionary *> *)allLogs {
+    [self flushLogs];
     return [[DatabaseManager sharedManager] queryLogRecords:self.maxLogCount];
 }
 
 - (NSArray<NSDictionary *> *)logsWithLimit:(NSInteger)limit {
+    [self flushLogs];
     return [[DatabaseManager sharedManager] queryLogRecords:limit];
 }
 
@@ -138,16 +177,15 @@ static void uc_NSLogv(NSString *format, va_list args) {
 }
 
 - (void)clearAllLogs {
+    [self flushLogs];
     [[DatabaseManager sharedManager] clearTable:@"yunxingrizhi"];
-    // 同时清空 stderr 重定向文件
-    [[NSFileManager defaultManager] removeItemAtPath:[self logFilePath] error:nil];
 }
 
 #pragma mark - 清理策略
 
 - (void)startCleanupTimer {
     [self cleanupIfNeeded];
-    self.cleanupTimer = [NSTimer scheduledTimerWithTimeInterval:60.0
+    self.cleanupTimer = [NSTimer scheduledTimerWithTimeInterval:300.0
                                                            target:self
                                                          selector:@selector(cleanupIfNeeded)
                                                          userInfo:nil
@@ -155,6 +193,7 @@ static void uc_NSLogv(NSString *format, va_list args) {
 }
 
 - (void)cleanupIfNeeded {
+    if (!self.isCaptureEnabled) return;
     DatabaseManager *db = [DatabaseManager sharedManager];
     if (self.maxLogDays > 0) {
         [db cleanupLogsOlderThanDays:self.maxLogDays];
