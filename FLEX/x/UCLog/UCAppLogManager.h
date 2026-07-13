@@ -15,7 +15,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong) id osLogController;
 
 - (void)startCapture;
+- (void)startCaptureIfEnabled;
 - (void)stopCapture;
+
+- (BOOL)isCaptureEnabled;
 
 - (NSArray<NSDictionary *> *)allLogs;
 - (NSArray<NSDictionary *> *)logsWithLimit:(NSInteger)limit;
