@@ -322,7 +322,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
 
 - (NSInteger)tableView:(UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
     if (section == 0) return self.switchItems.count;
-    if (section == 1) return 8;  // 解密/密钥/算法/动态Hook/内存扫描/函数拦截/Socket/PointCastle
+    if (section == 1) return 9;  // 解密/密钥/算法/动态Hook/内存扫描/函数拦截/Socket/PointCastle/运行日志
     return 2;  // 导出全部数据 + 清除所有本地数据
 }
 
@@ -383,6 +383,7 @@ typedef NS_ENUM(NSInteger, CaptureTab) {
             @{@"title": @"函数拦截记录", @"table": @"func_intercept",    @"r": @0.1,  @"g": @0.7,  @"b": @0.9},
             @{@"title": @"Socket记录",   @"table": @"url_responses",     @"r": @1.0,  @"g": @0.5,  @"b": @0.0},
             @{@"title": @"PointCastle密钥", @"table": @"pointycastle_keys", @"r": @0.9,  @"g": @0.3,  @"b": @0.5},
+            @{@"title": @"运行日志",     @"table": @"yunxingrizhi",      @"r": @0.5,  @"g": @0.8,  @"b": @0.2},
         ];
 
         NSDictionary *item = statItems[indexPath.row];
