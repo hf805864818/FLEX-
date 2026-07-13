@@ -19,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)stopCapture;
 
 - (BOOL)isCaptureEnabled;
+- (void)enqueueLog:(NSString *)msg;
 
 - (NSArray<NSDictionary *> *)allLogs;
 - (NSArray<NSDictionary *> *)logsWithLimit:(NSInteger)limit;
