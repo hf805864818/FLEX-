@@ -50,7 +50,8 @@
 
         for (NSInteger i = 0; i < (NSInteger)items.count; i++) {
             NSDictionary *item = items[i];
-            NSString *text = item[@"longText"] ?: @"";
+            // yunxingrizhi 表用 logText，其他表用 longText
+            NSString *text = item[@"longText"] ?: item[@"logText"] ?: @"";
             NSString *ts = item[@"timestamp"] ?: [NSString stringWithFormat:@"%ld", (long)i];
             NSString *safe = [[ts stringByReplacingOccurrencesOfString:@":" withString:@"-"]
                               stringByReplacingOccurrencesOfString:@"/" withString:@"-"];
