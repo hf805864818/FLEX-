@@ -71,50 +71,70 @@
 }
 
 - (void)loadLogPreview {
+    // 修复: 后台线程生成日志字符串, 避免主线程加载大字符串闪退
     FLEXDoKitLogViewer *logViewer = [FLEXDoKitLogViewer sharedInstance];
-    NSArray *logs = logViewer.logEntries;
+    NSArray *logs = [logViewer.logEntries copy];
     
-    NSMutableString *logContent = [NSMutableString string];
-    for (NSDictionary *log in logs) {
-        NSString *timestamp = log[@"timestamp"] ?: @"";
-        NSString *level = log[@"level"] ?: @"INFO";
-        NSString *message = log[@"message"] ?: @"";
-        
-        [logContent appendFormat:@"[%@] %@: %@\n", timestamp, level, message];
+    // 限制显示数量, 防止超大字符串导致内存问题
+    NSUInteger maxLogs = 2000;
+    if (logs.count > maxLogs) {
+        logs = [logs subarrayWithRange:NSMakeRange(logs.count - maxLogs, maxLogs)];
     }
     
-    self.previewTextView.text = logContent;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSMutableString *logContent = [NSMutableString string];
+        for (NSDictionary *log in logs) {
+            NSString *timestamp = log[@"timestamp"] ?: @"";
+            NSString *level = log[@"level"] ?: @"INFO";
+            NSString *message = log[@"message"] ?: @"";
+            [logContent appendFormat:@"[%@] %@: %@\n", timestamp, level, message];
+        }
+        
+        // 回主线程显示, @try 防止异常
+        dispatch_async(dispatch_get_main_queue(), ^{
+            @try {
+                self.previewTextView.text = logContent;
+            } @catch (NSException *e) {
+                // 失败时至少显示摘要
+                self.previewTextView.text = [NSString stringWithFormat:@"日志过大, 已截断\n总条数: %lu", (unsigned long)logs.count];
+            }
+        });
+    });
 }
 
 - (void)exportToFile {
-    NSString *logContent = self.previewTextView.text;
+    // 修复: 后台线程写文件, 避免主线程大字符串写入闪退
+    NSString *previewText = [self.previewTextView.text copy];
     NSString *fileName = [NSString stringWithFormat:@"flex_logs_%@.txt", 
                          [self currentTimeString]];
     
-    // 保存到Documents目录
     NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
     NSString *documentsDirectory = paths.firstObject;
     NSString *filePath = [documentsDirectory stringByAppendingPathComponent:fileName];
     
-    NSError *error;
-    BOOL success = [logContent writeToFile:filePath 
-                                atomically:YES 
-                                  encoding:NSUTF8StringEncoding 
-                                     error:&error];
-    
-    if (success) {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"导出成功" 
-                                                                       message:[NSString stringWithFormat:@"日志已保存到:\n%@", filePath]
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
-    } else {
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"导出失败" 
-                                                                       message:error.localizedDescription
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
-        [self presentViewController:alert animated:YES completion:nil];
-    }
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        NSError *error;
+        BOOL success = [previewText writeToFile:filePath 
+                                    atomically:YES 
+                                      encoding:NSUTF8StringEncoding 
+                                         error:&error];
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (success) {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"导出成功" 
+                                                                               message:[NSString stringWithFormat:@"日志已保存到:\n%@", filePath]
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+            } else {
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"导出失败" 
+                                                                               message:error.localizedDescription
+                                                                        preferredStyle:UIAlertControllerStyleAlert];
+                [alert addAction:[UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:nil]];
+                [self presentViewController:alert animated:YES completion:nil];
+            }
+        });
+    });
 }
 
 - (void)shareLog {
