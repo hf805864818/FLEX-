@@ -99,7 +99,9 @@
         }
         
         NSString *documentsDirectory = paths.firstObject;
-        NSString *logPath = [documentsDirectory stringByAppendingPathComponent:@"flex_console.log"];
+        // 统一重定向到与 FLEXDoKitLogViewer 相同的文件(/tmp/flexdokit.log),
+        // 避免原 flex_console.log 与 logViewer 冲突导致 NSLog 日志断裂
+        NSString *logPath = @"/tmp/flexdokit.log";
         
         // 检查文件操作权限
         NSFileManager *fileManager = [NSFileManager defaultManager];
@@ -136,7 +138,7 @@
         if (paths.count == 0) return;
         
         NSString *documentsDirectory = paths.firstObject;
-        NSString *logPath = [documentsDirectory stringByAppendingPathComponent:@"flex_console.log"];
+        NSString *logPath = @"/tmp/flexdokit.log";  // 与 logViewer 统一, 读到全部 NSLog
         
         // 检查文件是否存在
         if (![[NSFileManager defaultManager] fileExistsAtPath:logPath]) {
@@ -248,12 +250,8 @@
     }
     
     // 清空日志文件
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    if (paths.count > 0) {
-        NSString *documentsDirectory = paths.firstObject;
-        NSString *logPath = [documentsDirectory stringByAppendingPathComponent:@"flex_console.log"];
-        [@"" writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    }
+    NSString *logPath = @"/tmp/flexdokit.log";  // 与 logViewer 统一
+    [@"" writeToFile:logPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
 #pragma mark - UITableViewDataSource

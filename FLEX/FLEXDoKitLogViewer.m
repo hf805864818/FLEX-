@@ -44,31 +44,41 @@
 }
 
 - (void)startLogFileMonitoring {
+    NSString *logPath = @"/tmp/flexdokit.log";
+    __block unsigned long long lastOffset = 0;
+    
+    // 初始定位到文件当前末尾(只读新日志)
+    NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:logPath];
+    if (fh) {
+        lastOffset = [fh seekToEndOfFile].unsignedLongLongValue;
+        [fh closeFile];
+    }
+    
+    // 定时轮询: waitForDataInBackgroundAndNotify 在 iOS 上不可靠, 改为轮询追踪增量
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
-        NSString *logPath = @"/tmp/flexdokit.log";
-        NSFileHandle *fileHandle = [NSFileHandle fileHandleForReadingAtPath:logPath];
-        
-        if (fileHandle) {
-            [fileHandle seekToEndOfFile];
-            
-            [[NSNotificationCenter defaultCenter] addObserver:self 
-                                                     selector:@selector(logFileChanged:) 
-                                                         name:NSFileHandleDataAvailableNotification 
-                                                       object:fileHandle];
-            [fileHandle waitForDataInBackgroundAndNotify];
+        while (1) {
+            @autoreleasepool {
+                NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:logPath];
+                if (handle) {
+                    unsigned long long fileSize = [handle seekToEndOfFile].unsignedLongLongValue;
+                    if (fileSize > lastOffset) {
+                        [handle seekToFileOffset:lastOffset];
+                        NSData *data = [handle readDataToEndOfFile];
+                        lastOffset = fileSize;
+                        if (data.length > 0) {
+                            NSString *logString = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+                            if (logString) {
+                                [self parseLogString:logString];
+                            }
+                        }
+                    }
+                    [handle closeFile];
+                }
+            }
+            // 每 0.5 秒轮询一次
+            [NSThread sleepForTimeInterval:0.5];
         }
     });
-}
-
-- (void)logFileChanged:(NSNotification *)notification {
-    NSFileHandle *fileHandle = notification.object;
-    NSData *data = [fileHandle availableData];
-    
-    if (data.length > 0) {
-        NSString *logString = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-        [self parseLogString:logString];
-        [fileHandle waitForDataInBackgroundAndNotify];
-    }
 }
 
 - (void)parseLogString:(NSString *)logString {
