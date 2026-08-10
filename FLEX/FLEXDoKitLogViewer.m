@@ -50,7 +50,7 @@
     // 初始定位到文件当前末尾(只读新日志)
     NSFileHandle *fh = [NSFileHandle fileHandleForReadingAtPath:logPath];
     if (fh) {
-        lastOffset = [fh seekToEndOfFile].unsignedLongLongValue;
+        lastOffset = [fh seekToEndOfFile];   // seekToEndOfFile 返回 unsigned long long
         [fh closeFile];
     }
     
@@ -60,7 +60,7 @@
             @autoreleasepool {
                 NSFileHandle *handle = [NSFileHandle fileHandleForReadingAtPath:logPath];
                 if (handle) {
-                    unsigned long long fileSize = [handle seekToEndOfFile].unsignedLongLongValue;
+                    unsigned long long fileSize = [handle seekToEndOfFile];  // 返回 unsigned long long
                     if (fileSize > lastOffset) {
                         [handle seekToFileOffset:lastOffset];
                         NSData *data = [handle readDataToEndOfFile];
